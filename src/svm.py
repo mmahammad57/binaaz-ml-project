@@ -120,6 +120,8 @@ class PegasosSVM:
                 self._record_objective(X, y_pm1, t)
 
         self.n_steps_ = n_steps
+        self.weight_norm_ = float(np.linalg.norm(self.w))
+        self.margin_width_ = 2.0 / self.weight_norm_ if self.weight_norm_ > 0.0 else float("inf")
         return self
 
     def decision_function(self, X):
