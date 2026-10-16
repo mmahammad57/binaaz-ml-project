@@ -13,6 +13,7 @@ class PegasosSVM:
         n_epochs: int | None = None,
         learning_rate_power: float = 1.0,
         history_every: int = 1000,
+        gamma: float = 1.0,
     ):
         self.lambda_ = lambda_
         self.n_iters = n_iters
@@ -20,10 +21,12 @@ class PegasosSVM:
         self.n_epochs = n_epochs
         self.learning_rate_power = learning_rate_power
         self.history_every = history_every
+        self.gamma = gamma
         self.w = None
         self.b = 0.0
 
     def _validate_params(self):
+        self._validate_gamma()
         if (isinstance(self.lambda_, (bool, np.bool_))
                 or not isinstance(self.lambda_, (int, float, np.integer, np.floating))
                 or not np.isfinite(self.lambda_) or self.lambda_ <= 0):
@@ -47,6 +50,12 @@ class PegasosSVM:
                 or self.history_every < 1):
             raise ValueError("history_every must be a positive integer")
 
+    def _validate_gamma(self):
+        if (isinstance(self.gamma, (bool, np.bool_))
+                or not isinstance(self.gamma, (int, float, np.integer, np.floating))
+                or not np.isfinite(self.gamma) or self.gamma <= 0):
+            raise ValueError("gamma must be a finite positive number")
+
     @staticmethod
     def _validate_X(X):
         X = np.asarray(X, dtype=float)
@@ -55,6 +64,17 @@ class PegasosSVM:
         if not np.isfinite(X).all():
             raise ValueError("X must contain only finite values")
         return X
+
+    def _rbf_kernel(self, X, Z):
+        self._validate_gamma()
+        X = self._validate_X(X)
+        Z = self._validate_X(Z)
+        if X.shape[1] != Z.shape[1]:
+            raise ValueError("X and Z must have the same number of features")
+        distances = (np.sum(X * X, axis=1)[:, None]
+                     + np.sum(Z * Z, axis=1)[None, :] - 2.0 * (X @ Z.T))
+        distances = np.maximum(distances, 0.0)
+        return np.exp(-self.gamma * distances)
 
     def _to_pm1(self, y):
         y = np.asarray(y)
