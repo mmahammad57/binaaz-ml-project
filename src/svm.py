@@ -119,8 +119,6 @@ class PegasosSVM:
         self.b = 0.0
         self.history_ = []
         self._record_objective(K, y_pm1, 0)
-        for name in ("weight_norm_", "margin_width_", "support_", "support_vectors_"):
-            self.__dict__.pop(name, None)
         rng = np.random.default_rng(self.random_state)
         radius = 1.0 / np.sqrt(self.lambda_)
         n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
@@ -155,6 +153,12 @@ class PegasosSVM:
                 self._record_objective(K, y_pm1, t)
 
         self.n_steps_ = n_steps
+        scores = K @ self.alpha_
+        self.weight_norm_ = float(np.sqrt(max(0.0, float(self.alpha_ @ scores))))
+        self.margin_width_ = 2.0 / self.weight_norm_ if self.weight_norm_ > 0.0 else float("inf")
+        margins = y_pm1 * (scores + self.b)
+        self.support_ = np.flatnonzero(margins <= 1.0 + 1e-10)
+        self.support_vectors_ = self.X_fit_[self.support_].copy()
         return self
 
     def fit(self, X, y):
@@ -167,6 +171,8 @@ class PegasosSVM:
         self.n_features_in_ = X.shape[1]
         if self.kernel == "rbf":
             return self._fit_kernel(X, y_pm1)
+        for name in ("alpha_", "X_fit_"):
+            self.__dict__.pop(name, None)
         self.w = np.zeros(self.n_features_in_, dtype=float)
         self.b = 0.0
         self.history_ = []
@@ -208,12 +214,15 @@ class PegasosSVM:
 
     def decision_function(self, X):
         if self.kernel == "rbf":
-            raise NotImplementedError("Kernel prediction is not implemented yet")
-        if self.w is None:
+            if not hasattr(self, "alpha_"):
+                raise RuntimeError("Call fit before prediction")
+        elif self.w is None:
             raise RuntimeError("Call fit before prediction")
         X = self._validate_X(X)
         if X.shape[1] != self.n_features_in_:
             raise ValueError("X must have the same number of features as training data")
+        if self.kernel == "rbf":
+            return self._rbf_kernel(X, self.X_fit_) @ self.alpha_ + self.b
         return X @ self.w + self.b
 
     def predict(self, X):
