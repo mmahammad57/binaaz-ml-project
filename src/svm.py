@@ -122,6 +122,9 @@ class PegasosSVM:
         self.n_steps_ = n_steps
         self.weight_norm_ = float(np.linalg.norm(self.w))
         self.margin_width_ = 2.0 / self.weight_norm_ if self.weight_norm_ > 0.0 else float("inf")
+        margins = y_pm1 * (X @ self.w + self.b)
+        self.support_ = np.flatnonzero(margins <= 1.0 + 1e-10)
+        self.support_vectors_ = X[self.support_].copy()
         return self
 
     def decision_function(self, X):
