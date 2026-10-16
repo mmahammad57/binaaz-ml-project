@@ -12,12 +12,14 @@ class PegasosSVM:
         *,
         n_epochs: int | None = None,
         learning_rate_power: float = 1.0,
+        history_every: int = 1000,
     ):
         self.lambda_ = lambda_
         self.n_iters = n_iters
         self.random_state = random_state
         self.n_epochs = n_epochs
         self.learning_rate_power = learning_rate_power
+        self.history_every = history_every
         self.w = None
         self.b = 0.0
 
@@ -40,6 +42,10 @@ class PegasosSVM:
                 or not np.isfinite(self.learning_rate_power)
                 or not 0.5 < self.learning_rate_power <= 1.0):
             raise ValueError("learning_rate_power must be in (0.5, 1.0]")
+        if (isinstance(self.history_every, (bool, np.bool_))
+                or not isinstance(self.history_every, (int, np.integer))
+                or self.history_every < 1):
+            raise ValueError("history_every must be a positive integer")
 
     @staticmethod
     def _validate_X(X):
@@ -64,6 +70,16 @@ class PegasosSVM:
         self.classes_ = classes
         return 2.0 * inverse - 1.0
 
+    def _record_objective(self, X, y_pm1, step):
+        margins = y_pm1 * (X @ self.w + self.b)
+        hinge_loss = np.maximum(0.0, 1.0 - margins).mean()
+        regularization = self.lambda_ / 2.0 * (self.w @ self.w)
+        self.history_.append({
+            "step": step,
+            "hinge_loss": float(hinge_loss),
+            "objective": float(regularization + hinge_loss),
+        })
+
     def fit(self, X, y):
         self._validate_params()
         X = self._validate_X(X)
@@ -74,6 +90,8 @@ class PegasosSVM:
         self.n_features_in_ = X.shape[1]
         self.w = np.zeros(self.n_features_in_, dtype=float)
         self.b = 0.0
+        self.history_ = []
+        self._record_objective(X, y_pm1, 0)
         rng = np.random.default_rng(self.random_state)
         radius = 1.0 / np.sqrt(self.lambda_)
         n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
@@ -97,6 +115,9 @@ class PegasosSVM:
             norm = np.linalg.norm(self.w)
             if norm > radius:
                 self.w *= radius / norm
+
+            if t % self.history_every == 0 or t == n_steps:
+                self._record_objective(X, y_pm1, t)
 
         self.n_steps_ = n_steps
         return self
