@@ -3,6 +3,63 @@ from __future__ import annotations
 import numpy as np
 
 
+def _positive_integer(value, name):
+    if (isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer)) or value < 1):
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _positive_number(value, name):
+    if (isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            or not np.isfinite(value) or value <= 0):
+        raise ValueError(f"{name} must be a finite positive number")
+
+
+def _feature_matrix(X):
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[0] == 0 or X.shape[1] == 0:
+        raise ValueError("X must be a nonempty two-dimensional feature matrix")
+    if not np.isfinite(X).all():
+        raise ValueError("X must contain only finite values")
+    return X
+
+
+class RandomFourierFeatures:
+    def __init__(self, gamma=1.0, n_components=500, random_state=42, batch_size=2048):
+        self.gamma = gamma
+        self.n_components = n_components
+        self.random_state = random_state
+        self.batch_size = batch_size
+
+    def fit(self, X):
+        _positive_number(self.gamma, "gamma")
+        _positive_integer(self.n_components, "n_components")
+        _positive_integer(self.batch_size, "batch_size")
+        X = _feature_matrix(X)
+        self.n_features_in_ = X.shape[1]
+        rng = np.random.default_rng(self.random_state)
+        self.random_weights_ = rng.normal(0.0, np.sqrt(2.0 * self.gamma),
+                                          (X.shape[1], self.n_components))
+        self.random_offset_ = rng.uniform(0.0, 2.0 * np.pi, self.n_components)
+        return self
+
+    def transform(self, X):
+        if not hasattr(self, "random_weights_"):
+            raise RuntimeError("Call fit before transforming features")
+        X = _feature_matrix(X)
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError("X must have the same number of features as training data")
+        Z = np.empty((len(X), self.n_components), dtype=float)
+        for start in range(0, len(X), self.batch_size):
+            block = Z[start:start + self.batch_size]
+            np.matmul(X[start:start + self.batch_size], self.random_weights_, out=block)
+            block += self.random_offset_
+            np.cos(block, out=block)
+            block *= np.sqrt(2.0 / self.n_components)
+        return Z
+
+
 class PegasosSVM:
     def __init__(
         self,
@@ -15,6 +72,8 @@ class PegasosSVM:
         history_every: int = 1000,
         gamma: float = 1.0,
         kernel: str = "linear",
+        n_components: int = 500,
+        batch_size: int = 2048,
     ):
         self.lambda_ = lambda_
         self.n_iters = n_iters
@@ -24,61 +83,25 @@ class PegasosSVM:
         self.history_every = history_every
         self.gamma = gamma
         self.kernel = kernel
+        self.n_components = n_components
+        self.batch_size = batch_size
         self.w = None
         self.b = 0.0
 
     def _validate_params(self):
-        if self.kernel not in ("linear", "rbf"):
-            raise ValueError("kernel must be 'linear' or 'rbf'")
-        self._validate_gamma()
-        if (isinstance(self.lambda_, (bool, np.bool_))
-                or not isinstance(self.lambda_, (int, float, np.integer, np.floating))
-                or not np.isfinite(self.lambda_) or self.lambda_ <= 0):
-            raise ValueError("lambda_ must be a finite positive number")
-        if (isinstance(self.n_iters, (bool, np.bool_))
-                or not isinstance(self.n_iters, (int, np.integer))
-                or self.n_iters < 1):
-            raise ValueError("n_iters must be a positive integer")
+        if self.kernel not in ("linear", "rff"):
+            raise ValueError("kernel must be 'linear' or 'rff'")
+        _positive_number(self.lambda_, "lambda_")
+        _positive_number(self.gamma, "gamma")
+        for name in ("n_iters", "history_every", "n_components", "batch_size"):
+            _positive_integer(getattr(self, name), name)
         if self.n_epochs is not None:
-            if (isinstance(self.n_epochs, (bool, np.bool_))
-                    or not isinstance(self.n_epochs, (int, np.integer))
-                    or self.n_epochs < 1):
-                raise ValueError("n_epochs must be a positive integer or None")
-        if (isinstance(self.learning_rate_power, (bool, np.bool_))
-                or not isinstance(self.learning_rate_power, (int, float, np.integer, np.floating))
-                or not np.isfinite(self.learning_rate_power)
-                or not 0.5 < self.learning_rate_power <= 1.0):
+            _positive_integer(self.n_epochs, "n_epochs")
+        _positive_number(self.learning_rate_power, "learning_rate_power")
+        if not 0.5 < self.learning_rate_power <= 1.0:
             raise ValueError("learning_rate_power must be in (0.5, 1.0]")
-        if (isinstance(self.history_every, (bool, np.bool_))
-                or not isinstance(self.history_every, (int, np.integer))
-                or self.history_every < 1):
-            raise ValueError("history_every must be a positive integer")
 
-    def _validate_gamma(self):
-        if (isinstance(self.gamma, (bool, np.bool_))
-                or not isinstance(self.gamma, (int, float, np.integer, np.floating))
-                or not np.isfinite(self.gamma) or self.gamma <= 0):
-            raise ValueError("gamma must be a finite positive number")
-
-    @staticmethod
-    def _validate_X(X):
-        X = np.asarray(X, dtype=float)
-        if X.ndim != 2 or X.shape[0] == 0 or X.shape[1] == 0:
-            raise ValueError("X must be a nonempty two-dimensional feature matrix")
-        if not np.isfinite(X).all():
-            raise ValueError("X must contain only finite values")
-        return X
-
-    def _rbf_kernel(self, X, Z):
-        self._validate_gamma()
-        X = self._validate_X(X)
-        Z = self._validate_X(Z)
-        if X.shape[1] != Z.shape[1]:
-            raise ValueError("X and Z must have the same number of features")
-        distances = (np.sum(X * X, axis=1)[:, None]
-                     + np.sum(Z * Z, axis=1)[None, :] - 2.0 * (X @ Z.T))
-        distances = np.maximum(distances, 0.0)
-        return np.exp(-self.gamma * distances)
+    _validate_X = staticmethod(_feature_matrix)
 
     def _to_pm1(self, y):
         y = np.asarray(y)
@@ -95,106 +118,56 @@ class PegasosSVM:
         return 2.0 * inverse - 1.0
 
     def _record_objective(self, X, y_pm1, step):
-        if self.kernel == "rbf":
-            scores = X @ self.alpha_
-            norm_squared = max(0.0, float(self.alpha_ @ scores))
-        else:
-            scores = X @ self.w
-            norm_squared = self.w @ self.w
-        margins = y_pm1 * (scores + self.b)
+        margins = y_pm1 * (X @ self.w + self.b)
         hinge_loss = np.maximum(0.0, 1.0 - margins).mean()
-        regularization = self.lambda_ / 2.0 * norm_squared
+        regularization = self.lambda_ / 2.0 * (self.w @ self.w)
         self.history_.append({
             "step": step,
             "hinge_loss": float(hinge_loss),
             "objective": float(regularization + hinge_loss),
         })
 
-    def _fit_kernel(self, X, y_pm1):
-        self.w = None
-        self.X_fit_ = X.copy()
-        K = self._rbf_kernel(self.X_fit_, self.X_fit_)
-        self.alpha_ = np.zeros(X.shape[0], dtype=float)
-        scores = np.zeros(X.shape[0], dtype=float)
-        self.b = 0.0
-        self.history_ = []
-        self._record_objective(K, y_pm1, 0)
-        rng = np.random.default_rng(self.random_state)
-        radius = 1.0 / np.sqrt(self.lambda_)
-        n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
-
-        for t in range(1, n_steps + 1):
-            if self.n_epochs is None:
-                i = rng.integers(X.shape[0])
-            else:
-                offset = (t - 1) % X.shape[0]
-                if offset == 0:
-                    order = rng.permutation(X.shape[0])
-                i = order[offset]
-            margin = y_pm1[i] * (scores[i] + self.b)
-            eta = 1.0 / (self.lambda_ * t ** self.learning_rate_power)
-            shrink = 1.0 - eta * self.lambda_
-            self.alpha_ *= shrink
-            scores *= shrink
-
-            if margin < 1.0:
-                self.alpha_[i] += eta * y_pm1[i]
-                scores += eta * y_pm1[i] * K[:, i]
-                self.b += eta * y_pm1[i]
-
-            norm = np.sqrt(max(0.0, float(self.alpha_ @ scores)))
-            if norm > radius:
-                scale = radius / norm
-                self.alpha_ *= scale
-                scores *= scale
-
-            if t % self.history_every == 0 or t == n_steps:
-                scores = K @ self.alpha_
-                self._record_objective(K, y_pm1, t)
-
-        self.n_steps_ = n_steps
-        scores = K @ self.alpha_
-        self.weight_norm_ = float(np.sqrt(max(0.0, float(self.alpha_ @ scores))))
-        self.margin_width_ = 2.0 / self.weight_norm_ if self.weight_norm_ > 0.0 else float("inf")
-        margins = y_pm1 * (scores + self.b)
-        self.support_ = np.flatnonzero(margins <= 1.0 + 1e-10)
-        self.support_vectors_ = self.X_fit_[self.support_].copy()
-        return self
-
     def fit(self, X, y):
         self._validate_params()
         X = self._validate_X(X)
+        if self.kernel == "rff":
+            mapping = RandomFourierFeatures(self.gamma, self.n_components,
+                                            self.random_state, self.batch_size).fit(X)
+            Z = mapping.transform(X)
+        else:
+            mapping, Z = None, X
+        return self._fit_features(X, y, Z, mapping)
+
+    def _fit_features(self, X, y, Z, mapping=None):
+        self._validate_params()
         y = np.asarray(y)
         if y.ndim != 1 or len(y) != len(X):
             raise ValueError("X and y must have matching sample counts")
         y_pm1 = self._to_pm1(y)
         self.n_features_in_ = X.shape[1]
-        if self.kernel == "rbf":
-            return self._fit_kernel(X, y_pm1)
-        for name in ("alpha_", "X_fit_"):
-            self.__dict__.pop(name, None)
-        self.w = np.zeros(self.n_features_in_, dtype=float)
+        self.feature_map_ = mapping
+        self.w = np.zeros(Z.shape[1], dtype=float)
         self.b = 0.0
         self.history_ = []
-        self._record_objective(X, y_pm1, 0)
+        self._record_objective(Z, y_pm1, 0)
         rng = np.random.default_rng(self.random_state)
         radius = 1.0 / np.sqrt(self.lambda_)
-        n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
+        n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * len(Z)
 
         for t in range(1, n_steps + 1):
             if self.n_epochs is None:
-                i = rng.integers(X.shape[0])
+                i = rng.integers(len(Z))
             else:
-                offset = (t - 1) % X.shape[0]
+                offset = (t - 1) % len(Z)
                 if offset == 0:
-                    order = rng.permutation(X.shape[0])
+                    order = rng.permutation(len(Z))
                 i = order[offset]
-            margin = y_pm1[i] * (X[i] @ self.w + self.b)
+            margin = y_pm1[i] * (Z[i] @ self.w + self.b)
             eta = 1.0 / (self.lambda_ * t ** self.learning_rate_power)
             self.w *= 1.0 - eta * self.lambda_
 
             if margin < 1.0:
-                self.w += eta * y_pm1[i] * X[i]
+                self.w += eta * y_pm1[i] * Z[i]
                 self.b += eta * y_pm1[i]
 
             norm = np.linalg.norm(self.w)
@@ -202,28 +175,29 @@ class PegasosSVM:
                 self.w *= radius / norm
 
             if t % self.history_every == 0 or t == n_steps:
-                self._record_objective(X, y_pm1, t)
+                self._record_objective(Z, y_pm1, t)
 
         self.n_steps_ = n_steps
         self.weight_norm_ = float(np.linalg.norm(self.w))
         self.margin_width_ = 2.0 / self.weight_norm_ if self.weight_norm_ > 0.0 else float("inf")
-        margins = y_pm1 * (X @ self.w + self.b)
+        margins = y_pm1 * (Z @ self.w + self.b)
         self.support_ = np.flatnonzero(margins <= 1.0 + 1e-10)
         self.support_vectors_ = X[self.support_].copy()
         return self
 
     def decision_function(self, X):
-        if self.kernel == "rbf":
-            if not hasattr(self, "alpha_"):
-                raise RuntimeError("Call fit before prediction")
-        elif self.w is None:
+        if self.w is None:
             raise RuntimeError("Call fit before prediction")
         X = self._validate_X(X)
         if X.shape[1] != self.n_features_in_:
             raise ValueError("X must have the same number of features as training data")
-        if self.kernel == "rbf":
-            return self._rbf_kernel(X, self.X_fit_) @ self.alpha_ + self.b
-        return X @ self.w + self.b
+        if self.feature_map_ is None:
+            return X @ self.w + self.b
+        scores = np.empty(len(X), dtype=float)
+        for start in range(0, len(X), self.batch_size):
+            block = X[start:start + self.batch_size]
+            scores[start:start + len(block)] = self.feature_map_.transform(block) @ self.w + self.b
+        return scores
 
     def predict(self, X):
         scores = self.decision_function(X)

@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from src.svm import PegasosSVM
+from src.svm import PegasosSVM, RandomFourierFeatures
 
 
 class LinearPegasosTests(unittest.TestCase):
@@ -124,113 +124,109 @@ class LinearPegasosTests(unittest.TestCase):
                     getattr(model, method)(X)
 
 
-class KernelPegasosTests(unittest.TestCase):
+class RFFPegasosTests(unittest.TestCase):
     def setUp(self):
         self.X = np.array([[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]])
         self.y = np.array([1, 0, 0, 1])
 
-    def test_rbf_matches_pairwise_distances(self):
+    def test_random_features_approximate_rbf_similarities(self):
         Z = np.array([[0.0, 0.0], [2.0, -1.0]])
         for gamma in (0.1, 1.0, 3.0):
             with self.subTest(gamma=gamma):
-                model = PegasosSVM(kernel="rbf", gamma=gamma)
+                mapping = RandomFourierFeatures(gamma=gamma, n_components=20000).fit(self.X)
                 expected = np.exp(-gamma * ((self.X[:, None, :] - Z[None, :, :]) ** 2).sum(axis=2))
-                actual = model._rbf_kernel(self.X, Z)
+                actual = mapping.transform(self.X) @ mapping.transform(Z).T
+                np.testing.assert_allclose(actual, expected, atol=0.035)
 
-                np.testing.assert_allclose(actual, expected)
-                self.assertEqual(actual.shape, (4, 2))
-                self.assertTrue(np.all((actual >= 0.0) & (actual <= 1.0)))
-                gram = model._rbf_kernel(self.X, self.X)
-                np.testing.assert_allclose(gram, gram.T)
-                np.testing.assert_allclose(np.diag(gram), 1.0)
-                self.assertGreaterEqual(np.linalg.eigvalsh(gram).min(), -1e-10)
+    def test_transform_matches_formula_and_batch_sizes(self):
+        mapping = RandomFourierFeatures(n_components=40, batch_size=2).fit(self.X)
+        expected = np.sqrt(2.0 / 40) * np.cos(self.X @ mapping.random_weights_ + mapping.random_offset_)
+        np.testing.assert_allclose(mapping.transform(self.X), expected)
+        mapping.batch_size = 100
+        np.testing.assert_allclose(mapping.transform(self.X), expected)
+        self.assertEqual(expected.shape, (4, 40))
 
-    def test_kernel_updates_match_explicit_feature_space(self):
-        K = PegasosSVM(gamma=0.7)._rbf_kernel(self.X, self.X)
-        features = np.linalg.cholesky(K)
+    def test_rff_updates_match_linear_training_on_same_features(self):
         for epochs in (None, 5):
             for power in (1.0, 0.75):
                 with self.subTest(epochs=epochs, power=power):
                     params = dict(lambda_=0.2, n_iters=31, n_epochs=epochs,
                                   learning_rate_power=power, history_every=7)
-                    kernel = PegasosSVM(kernel="rbf", gamma=0.7, **params).fit(self.X, self.y)
+                    model = PegasosSVM(kernel="rff", gamma=0.7, n_components=50, **params).fit(self.X, self.y)
+                    features = model.feature_map_.transform(self.X)
                     linear = PegasosSVM(**params).fit(features, self.y)
+                    np.testing.assert_array_equal(model.w, linear.w)
+                    np.testing.assert_allclose(model.decision_function(self.X),
+                                               linear.decision_function(features))
+                    self.assertEqual(model.history_, linear.history_)
+                    self.assertAlmostEqual(model.weight_norm_, linear.weight_norm_)
+                    self.assertAlmostEqual(model.margin_width_, linear.margin_width_)
+                    self.assertLessEqual(model.weight_norm_, 1 / np.sqrt(0.2) + 1e-10)
+                    self.assertEqual(model.n_steps_, 31 if epochs is None else 20)
 
-                    np.testing.assert_allclose(kernel.decision_function(self.X),
-                                               linear.decision_function(features), atol=1e-10)
-                    self.assertAlmostEqual(kernel.weight_norm_, linear.weight_norm_)
-                    self.assertAlmostEqual(kernel.margin_width_, linear.margin_width_)
-                    self.assertLessEqual(kernel.weight_norm_, 1 / np.sqrt(0.2) + 1e-10)
-                    self.assertAlmostEqual(kernel.b, linear.b)
-                    self.assertEqual(kernel.n_steps_, 31 if epochs is None else 20)
-                    self.assertEqual([row["step"] for row in kernel.history_],
-                                     [row["step"] for row in linear.history_])
-                    np.testing.assert_allclose([row["objective"] for row in kernel.history_],
-                                               [row["objective"] for row in linear.history_], atol=1e-10)
-
-    def test_kernel_scores_objective_and_support_diagnostics(self):
-        model = PegasosSVM(kernel="rbf", lambda_=0.1, n_epochs=20).fit(self.X, self.y)
-        K = model._rbf_kernel(self.X, self.X)
-        scores = K @ model.alpha_ + model.b
+    def test_rff_objective_and_support_diagnostics(self):
+        model = PegasosSVM(kernel="rff", lambda_=0.1, n_epochs=20).fit(self.X, self.y)
+        features = model.feature_map_.transform(self.X)
+        scores = features @ model.w + model.b
         margins = (2 * self.y - 1) * scores
-        norm_squared = model.alpha_ @ K @ model.alpha_
         hinge = np.maximum(0.0, 1.0 - margins).mean()
-
         np.testing.assert_allclose(model.decision_function(self.X), scores)
-        self.assertAlmostEqual(model.weight_norm_, np.sqrt(norm_squared))
         self.assertAlmostEqual(model.history_[-1]["hinge_loss"], hinge)
-        self.assertAlmostEqual(model.history_[-1]["objective"], 0.05 * norm_squared + hinge)
+        self.assertAlmostEqual(model.history_[-1]["objective"], 0.05 * (model.w @ model.w) + hinge)
         np.testing.assert_array_equal(model.support_, np.flatnonzero(margins <= 1 + 1e-10))
         np.testing.assert_array_equal(model.support_vectors_, self.X[model.support_])
+        self.assertEqual(model.w.shape, (500,))
+        self.assertFalse(hasattr(model, "alpha_"))
+        self.assertFalse(hasattr(model, "X_fit_"))
 
-    def test_kernel_predictions_preserve_string_labels(self):
+    def test_rff_predictions_preserve_string_labels(self):
         labels = np.where(self.y == 1, "premium", "standard")
-        model = PegasosSVM(kernel="rbf", lambda_=0.01, n_epochs=40).fit(self.X, labels)
+        model = PegasosSVM(kernel="rff", lambda_=0.01, n_epochs=40).fit(self.X, labels)
         np.testing.assert_array_equal(model.predict(self.X), labels)
         self.assertEqual(model.predict(self.X).dtype, labels.dtype)
 
-    def test_kernel_learns_xor_on_held_out_points(self):
+    def test_rff_learns_xor_on_held_out_points(self):
         rng = np.random.default_rng(4)
         X = rng.uniform(-2.0, 2.0, (200, 2))
         y = (X[:, 0] * X[:, 1] > 0).astype(int)
-        model = PegasosSVM(kernel="rbf", lambda_=0.01, n_epochs=50).fit(X[:100], y[:100])
-
-        self.assertGreaterEqual(np.mean(model.predict(X[100:]) == y[100:]), 0.95)
+        model = PegasosSVM(kernel="rff", lambda_=0.01, n_epochs=50).fit(X[:100], y[:100])
+        self.assertGreaterEqual(np.mean(model.predict(X[100:]) == y[100:]), 0.9)
         self.assertLess(model.history_[-1]["objective"], model.history_[0]["objective"])
 
-    def test_zero_kernel_norm_has_infinite_margin(self):
-        model = PegasosSVM(kernel="rbf", lambda_=1.0, n_iters=2, random_state=42)
-        model.fit([[0.0], [0.0]], [0, 1])
-
-        self.assertEqual(model.weight_norm_, 0.0)
-        self.assertTrue(np.isinf(model.margin_width_))
-        np.testing.assert_array_equal(model.support_, [0, 1])
-
-    def test_kernel_fit_copies_training_data(self):
+    def test_batched_prediction_reuses_map_and_ignores_input_mutations(self):
         X = self.X.copy()
-        model = PegasosSVM(kernel="rbf", lambda_=0.1, n_epochs=10).fit(X, self.y)
+        model = PegasosSVM(kernel="rff", lambda_=0.1, n_epochs=10, batch_size=2).fit(X, self.y)
         before = model.decision_function(self.X).copy()
         supports = model.support_vectors_.copy()
+        weights = model.feature_map_.random_weights_.copy()
         X[:] = 99.0
-
-        np.testing.assert_array_equal(model.X_fit_, self.X)
         np.testing.assert_array_equal(model.support_vectors_, supports)
-        np.testing.assert_array_equal(model.decision_function(self.X), before)
+        np.testing.assert_allclose(model.decision_function(self.X), before)
+        model.batch_size = 1
+        np.testing.assert_allclose(model.decision_function(self.X), before)
+        np.testing.assert_array_equal(model.feature_map_.random_weights_, weights)
 
-    def test_kernel_validation_and_unfitted_prediction(self):
-        for gamma in (0, -1, True, np.nan, np.inf, "invalid"):
-            with self.subTest(gamma=gamma), self.assertRaises(ValueError):
-                PegasosSVM(kernel="rbf", gamma=gamma).fit(self.X, self.y)
-        with self.assertRaises(ValueError):
-            PegasosSVM(kernel="unknown").fit(self.X, self.y)
+    def test_mapping_and_model_validation(self):
+        for params in ({"gamma": 0}, {"gamma": np.nan}, {"n_components": 0},
+                       {"n_components": True}, {"batch_size": 0}):
+            with self.subTest(params=params), self.assertRaises(ValueError):
+                PegasosSVM(kernel="rff", **params).fit(self.X, self.y)
+            with self.subTest(mapping=params), self.assertRaises(ValueError):
+                RandomFourierFeatures(**params).fit(self.X)
+        for mode in ("rbf", "unknown"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                PegasosSVM(kernel=mode).fit(self.X, self.y)
+        with self.assertRaises(RuntimeError):
+            RandomFourierFeatures().transform(self.X)
         for method in ("decision_function", "predict"):
             with self.subTest(method=method), self.assertRaises(RuntimeError):
-                getattr(PegasosSVM(kernel="rbf"), method)(self.X)
-        with self.assertRaises(ValueError):
-            PegasosSVM()._rbf_kernel(self.X, [[1.0]])
-        model = PegasosSVM(kernel="rbf", n_iters=1).fit(self.X, self.y)
+                getattr(PegasosSVM(kernel="rff"), method)(self.X)
+        mapping = RandomFourierFeatures().fit(self.X)
+        model = PegasosSVM(kernel="rff", n_iters=1).fit(self.X, self.y)
         for X in ([[1.0]], [[np.nan, 0.0]], [], [1.0, 2.0]):
             with self.subTest(X=X), self.assertRaises(ValueError):
+                mapping.transform(X)
+            with self.subTest(prediction=X), self.assertRaises(ValueError):
                 model.predict(X)
 
 
@@ -238,7 +234,7 @@ class ReproducibilityTests(unittest.TestCase):
     def test_seeded_fits_and_refits_match_without_changing_global_rng(self):
         X = np.array([[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]])
         y = np.array([1, 0, 0, 1])
-        for kernel in ("linear", "rbf"):
+        for kernel in ("linear", "rff"):
             for epochs in (None, 7):
                 with self.subTest(kernel=kernel, epochs=epochs):
                     params = dict(kernel=kernel, n_iters=29, n_epochs=epochs, lambda_=0.1,
@@ -258,20 +254,19 @@ class ReproducibilityTests(unittest.TestCase):
                         self.assertEqual(fitted.weight_norm_, norm)
                         self.assertEqual(fitted.margin_width_, width)
 
-    def test_refitting_between_modes_clears_kernel_state(self):
+    def test_refitting_between_modes_resets_feature_mapping(self):
         X = np.array([[-2.0], [-1.0], [1.0], [2.0]])
         y = [0, 0, 1, 1]
-        model = PegasosSVM(kernel="rbf", lambda_=0.1, n_epochs=10).fit(X, y)
+        model = PegasosSVM(kernel="rff", lambda_=0.1, n_epochs=10).fit(X, y)
         kernel_scores = model.decision_function(X).copy()
         model.kernel = "linear"
         model.fit(X, y)
 
-        self.assertFalse(hasattr(model, "alpha_"))
-        self.assertFalse(hasattr(model, "X_fit_"))
+        self.assertIsNone(model.feature_map_)
         np.testing.assert_allclose(model.decision_function(X), X @ model.w + model.b)
-        model.kernel = "rbf"
+        model.kernel = "rff"
         model.fit(X, y)
-        self.assertIsNone(model.w)
+        self.assertIsNotNone(model.feature_map_)
         np.testing.assert_array_equal(model.decision_function(X), kernel_scores)
 
 
