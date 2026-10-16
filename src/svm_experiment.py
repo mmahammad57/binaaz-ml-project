@@ -115,6 +115,8 @@ def sweep_svm(
         "score_input": score_input,
         "positive_class": encoder.classes_[1].item(),
         "greater_is_better": bool(greater_is_better),
+        "n_train": len(X_train),
+        "n_validation": len(X_val),
         "results": results,
     }
 
