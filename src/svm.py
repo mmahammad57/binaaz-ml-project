@@ -14,6 +14,7 @@ class PegasosSVM:
         learning_rate_power: float = 1.0,
         history_every: int = 1000,
         gamma: float = 1.0,
+        kernel: str = "linear",
     ):
         self.lambda_ = lambda_
         self.n_iters = n_iters
@@ -22,10 +23,13 @@ class PegasosSVM:
         self.learning_rate_power = learning_rate_power
         self.history_every = history_every
         self.gamma = gamma
+        self.kernel = kernel
         self.w = None
         self.b = 0.0
 
     def _validate_params(self):
+        if self.kernel not in ("linear", "rbf"):
+            raise ValueError("kernel must be 'linear' or 'rbf'")
         self._validate_gamma()
         if (isinstance(self.lambda_, (bool, np.bool_))
                 or not isinstance(self.lambda_, (int, float, np.integer, np.floating))
@@ -91,14 +95,67 @@ class PegasosSVM:
         return 2.0 * inverse - 1.0
 
     def _record_objective(self, X, y_pm1, step):
-        margins = y_pm1 * (X @ self.w + self.b)
+        if self.kernel == "rbf":
+            scores = X @ self.alpha_
+            norm_squared = max(0.0, float(self.alpha_ @ scores))
+        else:
+            scores = X @ self.w
+            norm_squared = self.w @ self.w
+        margins = y_pm1 * (scores + self.b)
         hinge_loss = np.maximum(0.0, 1.0 - margins).mean()
-        regularization = self.lambda_ / 2.0 * (self.w @ self.w)
+        regularization = self.lambda_ / 2.0 * norm_squared
         self.history_.append({
             "step": step,
             "hinge_loss": float(hinge_loss),
             "objective": float(regularization + hinge_loss),
         })
+
+    def _fit_kernel(self, X, y_pm1):
+        self.w = None
+        self.X_fit_ = X.copy()
+        K = self._rbf_kernel(self.X_fit_, self.X_fit_)
+        self.alpha_ = np.zeros(X.shape[0], dtype=float)
+        scores = np.zeros(X.shape[0], dtype=float)
+        self.b = 0.0
+        self.history_ = []
+        self._record_objective(K, y_pm1, 0)
+        for name in ("weight_norm_", "margin_width_", "support_", "support_vectors_"):
+            self.__dict__.pop(name, None)
+        rng = np.random.default_rng(self.random_state)
+        radius = 1.0 / np.sqrt(self.lambda_)
+        n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
+
+        for t in range(1, n_steps + 1):
+            if self.n_epochs is None:
+                i = rng.integers(X.shape[0])
+            else:
+                offset = (t - 1) % X.shape[0]
+                if offset == 0:
+                    order = rng.permutation(X.shape[0])
+                i = order[offset]
+            margin = y_pm1[i] * (scores[i] + self.b)
+            eta = 1.0 / (self.lambda_ * t ** self.learning_rate_power)
+            shrink = 1.0 - eta * self.lambda_
+            self.alpha_ *= shrink
+            scores *= shrink
+
+            if margin < 1.0:
+                self.alpha_[i] += eta * y_pm1[i]
+                scores += eta * y_pm1[i] * K[:, i]
+                self.b += eta * y_pm1[i]
+
+            norm = np.sqrt(max(0.0, float(self.alpha_ @ scores)))
+            if norm > radius:
+                scale = radius / norm
+                self.alpha_ *= scale
+                scores *= scale
+
+            if t % self.history_every == 0 or t == n_steps:
+                scores = K @ self.alpha_
+                self._record_objective(K, y_pm1, t)
+
+        self.n_steps_ = n_steps
+        return self
 
     def fit(self, X, y):
         self._validate_params()
@@ -108,6 +165,8 @@ class PegasosSVM:
             raise ValueError("X and y must have matching sample counts")
         y_pm1 = self._to_pm1(y)
         self.n_features_in_ = X.shape[1]
+        if self.kernel == "rbf":
+            return self._fit_kernel(X, y_pm1)
         self.w = np.zeros(self.n_features_in_, dtype=float)
         self.b = 0.0
         self.history_ = []
@@ -148,6 +207,8 @@ class PegasosSVM:
         return self
 
     def decision_function(self, X):
+        if self.kernel == "rbf":
+            raise NotImplementedError("Kernel prediction is not implemented yet")
         if self.w is None:
             raise RuntimeError("Call fit before prediction")
         X = self._validate_X(X)
