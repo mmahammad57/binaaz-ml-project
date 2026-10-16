@@ -79,7 +79,13 @@ class PegasosSVM:
         return self
 
     def decision_function(self, X):
-        raise NotImplementedError("TODO: decision_function")
+        if self.w is None:
+            raise RuntimeError("Call fit before prediction")
+        X = self._validate_X(X)
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError("X must have the same number of features as training data")
+        return X @ self.w + self.b
 
     def predict(self, X):
-        raise NotImplementedError("TODO: predict")
+        scores = self.decision_function(X)
+        return self.classes_[(scores >= 0.0).astype(int)]
