@@ -9,10 +9,15 @@ class PegasosSVM:
         lambda_: float = 1e-4,
         n_iters: int = 20_000,
         random_state: int = 42,
+        *,
+        n_epochs: int | None = None,
+        learning_rate_power: float = 1.0,
     ):
         self.lambda_ = lambda_
         self.n_iters = n_iters
         self.random_state = random_state
+        self.n_epochs = n_epochs
+        self.learning_rate_power = learning_rate_power
         self.w = None
         self.b = 0.0
 
@@ -25,6 +30,16 @@ class PegasosSVM:
                 or not isinstance(self.n_iters, (int, np.integer))
                 or self.n_iters < 1):
             raise ValueError("n_iters must be a positive integer")
+        if self.n_epochs is not None:
+            if (isinstance(self.n_epochs, (bool, np.bool_))
+                    or not isinstance(self.n_epochs, (int, np.integer))
+                    or self.n_epochs < 1):
+                raise ValueError("n_epochs must be a positive integer or None")
+        if (isinstance(self.learning_rate_power, (bool, np.bool_))
+                or not isinstance(self.learning_rate_power, (int, float, np.integer, np.floating))
+                or not np.isfinite(self.learning_rate_power)
+                or not 0.5 < self.learning_rate_power <= 1.0):
+            raise ValueError("learning_rate_power must be in (0.5, 1.0]")
 
     @staticmethod
     def _validate_X(X):
@@ -61,11 +76,18 @@ class PegasosSVM:
         self.b = 0.0
         rng = np.random.default_rng(self.random_state)
         radius = 1.0 / np.sqrt(self.lambda_)
+        n_steps = self.n_iters if self.n_epochs is None else self.n_epochs * X.shape[0]
 
-        for t in range(1, self.n_iters + 1):
-            i = rng.integers(X.shape[0])
+        for t in range(1, n_steps + 1):
+            if self.n_epochs is None:
+                i = rng.integers(X.shape[0])
+            else:
+                offset = (t - 1) % X.shape[0]
+                if offset == 0:
+                    order = rng.permutation(X.shape[0])
+                i = order[offset]
             margin = y_pm1[i] * (X[i] @ self.w + self.b)
-            eta = 1.0 / (self.lambda_ * t)
+            eta = 1.0 / (self.lambda_ * t ** self.learning_rate_power)
             self.w *= 1.0 - eta * self.lambda_
 
             if margin < 1.0:
@@ -76,6 +98,7 @@ class PegasosSVM:
             if norm > radius:
                 self.w *= radius / norm
 
+        self.n_steps_ = n_steps
         return self
 
     def decision_function(self, X):
