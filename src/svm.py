@@ -56,7 +56,27 @@ class PegasosSVM:
         if y.ndim != 1 or len(y) != len(X):
             raise ValueError("X and y must have matching sample counts")
         y_pm1 = self._to_pm1(y)
-        raise NotImplementedError("TODO: Pegasos training loop")
+        self.n_features_in_ = X.shape[1]
+        self.w = np.zeros(self.n_features_in_, dtype=float)
+        self.b = 0.0
+        rng = np.random.default_rng(self.random_state)
+        radius = 1.0 / np.sqrt(self.lambda_)
+
+        for t in range(1, self.n_iters + 1):
+            i = rng.integers(X.shape[0])
+            margin = y_pm1[i] * (X[i] @ self.w + self.b)
+            eta = 1.0 / (self.lambda_ * t)
+            self.w *= 1.0 - eta * self.lambda_
+
+            if margin < 1.0:
+                self.w += eta * y_pm1[i] * X[i]
+                self.b += eta * y_pm1[i]
+
+            norm = np.linalg.norm(self.w)
+            if norm > radius:
+                self.w *= radius / norm
+
+        return self
 
     def decision_function(self, X):
         raise NotImplementedError("TODO: decision_function")
