@@ -151,18 +151,19 @@ def make_features(df):
     return X, y, feature_names
 
 
-def make_tier_label(y_price, threshold=None):
+def make_tier_label(y_price: np.ndarray, threshold: float | None = None):
     """
     Derived classification target: price TIER (premium vs standard).
     Use the MEDIAN of the TRAINING price as the split threshold.
-      - premium = 1 (price >  threshold), standard = 0.
-    Return (y_tier, threshold).  The threshold must come from TRAIN only
+      - premium = 1 (price >= threshold), standard = 0 (price < threshold).
+    Return (y_tier, threshold). The threshold must come from TRAIN only
     (no peeking at val/test) to avoid leakage.
     """
     # Calculate median threshold strictly from the training set if not provided
     if threshold is None:
         threshold = float(np.median(y_price))
-    # Assign binary target: 1 for premium (price >= threshold), 0 for standard
+
+    # Binary label: 1 for price >= threshold (premium), 0 otherwise (standard)
     y_tier = (y_price >= threshold).astype(int)
     print(f"[Data Prep] Price-tier binary labels generated with threshold: {threshold:.2f} AZN")
     return y_tier, threshold
