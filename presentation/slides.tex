@@ -5,9 +5,10 @@
 %
 %  Every number is the one printed in report/report.tex and comes from the
 %  same file in results/; each is followed by a "% src:" comment naming that
-%  file and the row/column (or key). The two figures are slide versions
+%  file and the row/column (or key). The three figures are slide versions
 %  (6 x 3.5 in, 16 pt) drawn by the report's plotting code from the same
-%  data: report/figures/slide_*.png (svm_tuning.py, analysis.py SLIDE_STYLE).
+%  data: report/figures/slide_*.png (svm_tuning.py and analysis.py
+%  SLIDE_STYLE, tree_experiment.py plot_slide_depth_curves).
 %  Body text is 14 pt (class option); only sub- and superscripts are smaller.
 % =====================================================================
 \documentclass[14pt,aspectratio=169]{beamer}
@@ -17,6 +18,7 @@
 \usepackage{lmodern}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{graphicx}
 \graphicspath{{../report/figures/}}
 
@@ -103,11 +105,11 @@
       \[\Delta = I(S) - \frac{|S_L|}{|S|} I(S_L) - \frac{|S_R|}{|S|} I(S_R)\]
     \item Search: every feature, every \emph{observed} value as threshold;
       largest $\Delta$ wins % src: decision_tree.py:DecisionTree._best_split
-    \item Stop: pure node, max.\ depth, min.\ rows to split, % src: decision_tree.py:DecisionTree._grow, _best_split
-      min.\ rows per leaf, min.\ gain: fixed at 10 / 10 / 5 / 0 % src: results/report_facts.csv [tree_task_b_max_depth, _min_samples_split, _min_samples_leaf]; decision_tree.py default 0.0
+    \item Stop: pure node, max.\ depth, min.\ rows to split / per leaf, % src: decision_tree.py:DecisionTree._grow, _best_split
+      min.\ gain; tuned: depth 12 (A), 10 (B), leaf 5 % src: results/report_facts.csv [tree_task_a_max_depth 12, tree_task_b_max_depth 10, tree_task_*_min_samples_leaf 5]
     \item Matches scikit-learn: Task B 464 vs 462 leaves, % src: results/tree_comparison.csv [Task B gini, leaves ours/sklearn]
       99.9\,\% of test labels agree; % src: results/tree_comparison.csv [Task B gini, test agreement % 99.89]
-      Task A predictions correlate 0.9989 % src: results/tree_comparison.csv [Task A tree, pred corr 0.99886]
+      Task A predictions correlate 0.9984 % src: results/tree_comparison.csv [Task A tree, pred corr 0.99836]
   \end{itemize}
 \end{frame}
 
@@ -132,20 +134,21 @@
 
 % =====================================================================
 % 6. Tuning
-\begin{frame}{Tuning the SVMs on validation}
-  \begin{columns}[c,onlytextwidth]
-    \begin{column}{0.58\textwidth}
-      \includegraphics[width=\linewidth]{slide_svm_validation_f1.png}\\[0.2em]
-      7 $\lambda$ from $10^{-7}$ to $10^{-1}$; scale $= 1/171$ % src: results/report_facts.csv [svm_grid_n_lambdas, svm_grid_lambda_min, svm_grid_lambda_max, n_features]
-    \end{column}
-    \begin{column}{0.40\textwidth}
+\begin{frame}{Tuning on validation}
+  \vspace{-0.8em}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.49\textwidth}
+      \includegraphics[width=\linewidth]{slide_svm_validation_f1.png}
       \begin{itemize}\gap
-        \item Rule: within 0.005 of the best F1, largest $\lambda$ % src: results/svm_tuning/stability_check.csv [f1_tolerance]; svm_tuning.py:_select_stable
-        \item Final: linear, $\lambda = 10^{-3}$, F1 0.904, % src: results/report_facts.csv [svm_final_kernel]; results/svm_tuning/stability_check.csv [linear, lambda_ 0.001, val_F1 0.9037]
-          CV $0.897 \pm 0.003$ % src: results/svm_tuning/stability_check.csv [linear, cv_F1_mean 0.8970, cv_F1_std 0.0031]
-        \item RFF, $\lambda = 10^{-6}$: F1 0.903, % src: results/svm_tuning/stability_check.csv [rff, lambda_ 1e-06, val_F1 0.9027]
-          CV $0.763 \pm 0.095$ % src: results/svm_tuning/stability_check.csv [rff, cv_F1_mean 0.7632, cv_F1_std 0.0954]
-        \item It needs $10^6$ updates; a CV fold gives 320{,}000 % src: results/svm_tuning/stability_check.csv [rff, one_over_lambda 1e6, updates_per_fit 320000]
+        \item Largest $\lambda$ within 0.005 of the best F1: linear, $\lambda = 10^{-3}$ % src: results/svm_tuning/stability_check.csv [f1_tolerance; linear, lambda_ 0.001]; svm_tuning.py:_select_stable; results/report_facts.csv [svm_final_kernel]
+        \item RFF: CV F1 $0.763 \pm 0.095$, 320k of $10^6$ updates % src: results/svm_tuning/stability_check.csv [rff, cv_F1_mean 0.7632, cv_F1_std 0.0954, updates_per_fit 320000, one_over_lambda 1e6]
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.49\textwidth}
+      \includegraphics[width=\linewidth]{slide_tree_depth_curves.png}
+      \begin{itemize}\gap
+        \item Smallest depth, largest leaf within 0.002 of the best % src: tree_experiment.py:_select, TOLERANCE = 0.002
+        \item A: depth 12, leaf 5; B: depth 10, leaf 5 % src: results/tree_final_config.json; tree_experiment.py:run (n_samples 16000)
       \end{itemize}
     \end{column}
   \end{columns}
@@ -156,8 +159,8 @@
 \begin{frame}{Benchmark against scikit-learn (test set)}
   \presenter{Khizri Sakhrayev}
   \begin{itemize}\gap
-    \item Task A, $R^2$ on log price: ours 0.853, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
-      scikit-learn 0.852 % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8522]
+    \item Task A, $R^2$ on log price: ours 0.870, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8699]
+      scikit-learn 0.870 % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8704]
   \end{itemize}
   \vspace{0.3em}
   \centering
@@ -165,16 +168,16 @@
     \toprule
     Task B & F1 & F1, CV & Fit (s) \\
     \midrule
-    Tree Gini (ours)    & 0.926 & $0.907 \pm 0.006$ & 86.8 \\ % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9258, Fit s 86.7520]; results/benchmark_cv_task_b.csv [F1 0.9069 ± 0.0060]
-    Tree Gini (sklearn) & 0.926 & $0.907 \pm 0.006$ & 0.31 \\ % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), F1 0.9256, Fit s 0.3128]; results/benchmark_cv_task_b.csv [F1 0.9071 ± 0.0061]
-    Pegasos linear (ours) & 0.904 & $0.897 \pm 0.003$ & 2.7 \\ % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.9040, Fit s 2.6653]; results/benchmark_cv_task_b.csv [F1 0.8970 ± 0.0031]
-    SGD hinge (sklearn) & 0.905 & $0.894 \pm 0.004$ & 0.29 \\ % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), F1 0.9052, Fit s 0.2875]; results/benchmark_cv_task_b.csv [F1 0.8943 ± 0.0036]
+    Tree Gini (ours)    & 0.926 & $0.907 \pm 0.006$ & 85.6 \\ % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9258, Fit s 85.6299]; results/benchmark_cv_task_b.csv [F1 0.9069 ± 0.0060]
+    Tree Gini (sklearn) & 0.926 & $0.907 \pm 0.006$ & 0.28 \\ % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), F1 0.9256, Fit s 0.2810]; results/benchmark_cv_task_b.csv [F1 0.9071 ± 0.0061]
+    Pegasos linear (ours) & 0.904 & $0.897 \pm 0.003$ & 2.7 \\ % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.9040, Fit s 2.7089]; results/benchmark_cv_task_b.csv [F1 0.8970 ± 0.0031]
+    SGD hinge (sklearn) & 0.905 & $0.894 \pm 0.004$ & 0.29 \\ % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), F1 0.9052, Fit s 0.2866]; results/benchmark_cv_task_b.csv [F1 0.8943 ± 0.0036]
     \bottomrule
   \end{tabular}
   \raggedright
   \begin{itemize}\gap
-    \item Our tree: 277$\times$ slower; fit time grows $\times$15.0 (ours) % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
-      vs $\times$10.4 (sklearn) from 2k to 16k rows % src: results/benchmark_scaling.csv [Tree gini (ours) 10.3910 / 0.6940; Tree gini (sklearn) 0.06312 / 0.006055]
+    \item Our tree: 305$\times$ slower; fit time grows $\times$15.0 (ours) % src: 85.6299 / 0.2810 from results/benchmark_test_task_b.csv
+      vs $\times$10.3 (sklearn) from 2k to 16k rows % src: results/benchmark_scaling.csv [Tree gini (ours) 10.4055 / 0.6941; Tree gini (sklearn) 0.06209 / 0.006013]
   \end{itemize}
 \end{frame}
 
@@ -191,8 +194,8 @@
         \item Within 5\,\% of the 215{,}000~AZN threshold: % src: results/report_facts.csv [tier_threshold_train_median]
           tree 32.3\,\%, SVM 42.8\,\% wrong % src: results/error_analysis.md [Task B: distance from the tier threshold, 0-5%, B error % tree 32.31, SVM 42.81]
         \item That band holds 28\,\% of tree errors % src: results/error_analysis.md [Findings, bullet 5]
-        \item Task A median error: 14.3\,\% cheapest, 19.6\,\% dearest decile % src: results/error_analysis.md [By true-price decile, A MdAPE %, D1 14.27, D10 19.64]
-        \item Districts with 1--49 vs 1{,}000+ training rows: 20.0 vs 11.4\,\% % src: results/error_analysis.md [By district size, A MdAPE %, 1-49 20.03, >= 1000 11.35]
+        \item Task A median error: 11.0\,\% cheapest, 18.1\,\% dearest decile % src: results/error_analysis.md [By true-price decile, A MdAPE %, D1 10.96, D10 18.15]
+        \item Districts with 1--49 vs 1{,}000+ training rows: 20.2 vs 9.8\,\% % src: results/error_analysis.md [By district size, A MdAPE %, 1-49 20.18, >= 1000 9.80]
       \end{itemize}
     \end{column}
   \end{columns}
@@ -202,9 +205,9 @@
 % 9. Limitations
 \begin{frame}{Limitations and honest notes}
   \begin{itemize}\gap
-    \item Trees not tuned: fixed 10 / 10 / 5, while the SVMs were tuned % src: results/report_facts.csv [tree_task_*_max_depth, _min_samples_split, _min_samples_leaf, tree_task_*_source]
     \item RFF Pegasos is unstable on less data: CV F1 $0.763 \pm 0.095$ % src: results/benchmark_cv_task_b.csv [Pegasos RFF (ours), F1 0.7632 ± 0.0954]
-    \item CV on 20{,}000 of 77{,}616 rows, because our tree is 277$\times$ slower % src: results/report_facts.csv [cv_rows, cv_pool_rows]; 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+    \item CV on 20{,}000 of 77{,}616 rows, because our tree is 305$\times$ slower % src: results/report_facts.csv [cv_rows, cv_pool_rows]; 85.6299 / 0.2810 from results/benchmark_test_task_b.csv
+    \item Tree sweep on 16{,}000 rows; Task A's depth is at the grid's top, 12 % src: tree_experiment.py:run (n_samples 16000); results/report_facts.csv [tree_task_a_max_depth 12]
     \item One-hot built on all rows: 2 columns all-zero in training % src: results/report_facts.csv [onehot_all_zero_in_train = 2]
     \item 0 means ``not applicable'': floor for 15{,}338 listings, % src: results/report_facts.csv [rows_no_floor_filled_0]
       land area for 76{,}126 % src: results/report_facts.csv [rows_land_area_filled_0]
@@ -214,17 +217,16 @@
 % =====================================================================
 % 10. Contributions and next steps
 \begin{frame}{Contributions and next steps}
-  \begin{tabular}{@{}l@{\quad}l@{}}
+  \begin{tabular}{@{}l@{\quad}>{\raggedright\arraybackslash}p{0.6\textwidth}@{}}
     Mahammad Mammadli & data pipeline: cleaning, leakage, split \\
-    Ibrahim Aghazade  & decision tree and its scikit-learn test \\
+    Ibrahim Aghazade  & decision tree, node statistics and the scikit-learn match test, and the tree hyperparameter study (\texttt{tree\_experiment.py}) \\
     Sahib Aliyev      & Pegasos SVM, RFF, sweep and plot tools \\
-    Khizri Sakhrayev  & metrics, benchmark, tuning, analysis, report \\
+    Khizri Sakhrayev  & metrics, benchmark, SVM tuning, analysis, report \\
   \end{tabular}
-  \vspace{0.6em}
+  \vspace{0.4em}
   \begin{itemize}\gap
-    \item Faster split search: sorted values with running sums
-    \item Then a real tree sweep; bagging or boosting of our trees
-    \item Location features: distance to the centre, district statistics
+    \item Faster split search (running sums): tree sweep on all rows
+    \item Bagging or boosting of our trees; location features
   \end{itemize}
 \end{frame}
 

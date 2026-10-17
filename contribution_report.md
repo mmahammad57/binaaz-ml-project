@@ -10,7 +10,7 @@ contains all merged branches, and against the merged pull requests of
 | Member (Surname, Name) | GitHub handle | Main responsibilities |
 |------------------------|---------------|-----------------------|
 | Mammadli, Mahammad | mmahammad57 | Data pipeline: loading, cleaning, parsing, leakage removal, encoding, stratified split, training-only tier threshold (P1) |
-| Aghazade, Ibrahim | iaghazada15 | From-scratch decision tree: Gini/entropy/MSE, split search, stopping parameters, node statistics, scikit-learn match test (P2) |
+| Aghazade, Ibrahim | iaghazada15 | From-scratch decision tree: Gini/entropy/MSE, split search, stopping parameters, node statistics, scikit-learn match test (P2); tree hyperparameter study (P4a) |
 | Aliyev, Sahib | SahibAliyev5 | From-scratch Pegasos SVM: margin, support vectors, random Fourier features; sweep and plotting tools with tests (P3, P4b tooling) |
 | Sakhrayev, Khizri | khizrisakhrayev | Metrics, benchmark vs scikit-learn, SVM tuning on real data, error analysis, EDA, one-command pipeline, README, report and slides (P5–P7) |
 
@@ -28,16 +28,19 @@ offices (`b79bf9a`), and moved the imputation statistics to the training split
 only (`16eb4f2`). His work was merged through PRs #2, #4 and #5.
 
 **Aghazade, Ibrahim —** Implemented the from-scratch decision tree in
-`src/decision_tree.py`: Gini, entropy and variance (MSE) impurities, the
+`src/decision_tree.py` with Gini, entropy and variance (MSE) impurities, the
 exhaustive split search over observed thresholds, the four stopping parameters
 (`max_depth`, `min_samples_split`, `min_samples_leaf`,
-`min_impurity_decrease`), leaf values with `predict` and `predict_proba`, and
-`tests/test_decision_tree.py`, which compares the tree's predictions with
-scikit-learn's on toy data (`4f550d3`, merged in PR #3). A follow-up commit
-stores each node's sample count and impurity so that feature importances can be
-computed (`5ae6e15`, merged through PR #6). The tree hyperparameter sweep was
-not completed, so the final tree uses a fixed configuration (maximum depth 10,
-at least 10 rows to split, at least 5 rows per leaf).
+`min_impurity_decrease`), leaf values with `predict` and `predict_proba`, node
+statistics and the scikit-learn match test, and the tree hyperparameter study
+(`tree_experiment.py`). The tree and `tests/test_decision_tree.py` came in
+`4f550d3` (merged in PR #3) and the per-node sample counts and impurities used
+for feature importances in `5ae6e15` (merged through PR #6). For the study he
+wrote the data loading and stratified training subsample (`777bcfc`), the
+Task A and Task B depth and leaf sweeps with the selection rule and the
+JSON/CSV outputs (`eb61bb0`), the depth-curve figure (`3ec561b`) and the
+output tests (`422a32e`); `b05f08b` updated the documentation and comments of
+`src/decision_tree.py`. He merged PRs #8 and #9 into `main`.
 
 **Aliyev, Sahib —** Implemented a NumPy soft-margin SVM with Codex assistance,
 including Pegasos optimization, label encoding, configurable epochs and
@@ -81,20 +84,21 @@ pipeline he fixed the encoding of the five presence flags (`repair`,
 
 The team agreed on an equal split. Commit and line counts in the Git history
 differ widely between members: the integration work (benchmark, tuning,
-analysis, pipeline, report) produced the most code and text, the decision
-tree's core algorithm is compact, and the tree hyperparameter sweep was not
-completed.
+analysis, pipeline, report) produced the most code and text, and the
+decision tree's core algorithm is compact.
 
 | Member | Commits | Merge commits | Lines added | Lines deleted |
 |--------|--------:|--------------:|------------:|--------------:|
-| Mammadli, Mahammad | 16 | 1 | 315 | 95 |
-| Aghazade, Ibrahim | 2 | 0 | 238 | 17 |
+| Mammadli, Mahammad | 16 | 2 | 315 | 95 |
+| Aghazade, Ibrahim | 7 | 2 | 536 | 36 |
 | Aliyev, Sahib | 16 | 1 | 1,575 | 305 |
-| Sakhrayev, Khizri | 12 | 6 | 5,166 | 1,013 |
+| Sakhrayev, Khizri | 21 | 7 | 5,777 | 1,185 |
 
-Counted with `git log --no-merges --numstat` on the `Khizri` branch at commit
-`155129f`, which contains every merged branch. Each member's Git identities
-are combined (Sakhrayev, Khizri: `Khizri Sakhrayev` and `khizrisakhrayev`).
+Counted with `git log --no-merges --numstat` (and `git log --merges` for the
+merge commits) on the `Khizri` branch at commit `931009b`, which contains
+every merged branch. Each member's Git identities are combined (Aghazade,
+Ibrahim: `ibrahim15` and `Ibrahim Aghazada`; Sakhrayev, Khizri:
+`Khizri Sakhrayev` and `khizrisakhrayev`).
 The starter-pack commit `97ba518` (687 lines, committed by mmahammad57) is
 excluded, and so are binary files. Khizri Sakhrayev's added lines include 360
 lines of generated report tables.

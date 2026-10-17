@@ -74,14 +74,14 @@
     approximate an RBF kernel. Both are benchmarked against matched
     scikit-learn models on identical splits, with 5-fold cross-validation, a
     held-out test set and timing. On the test set our regression tree
-    reaches $R^2 = 0.853$ on log price, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
-    against 0.852 for scikit-learn. % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8522]
+    reaches $R^2 = 0.870$ on log price, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8699]
+    as does scikit-learn's. % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8704]
     Our Gini tree reaches F1 0.926 and ROC-AUC 0.971, % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9258, ROC-AUC 0.9705]
     and our linear Pegasos SVM, chosen on validation over the Fourier-feature
     variant, reaches F1 0.904. % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.9040]
     Each of our models is within 0.007 F1 of its best matched scikit-learn % src: results/error_analysis.md [Findings, bullet 1: within 0.007, largest gap -0.0065]
     baseline, and our trees are nearly identical to scikit-learn's, but they
-    fit about 277 times more slowly. % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv [Fit s, Tree gini (ours) / (sklearn)]
+    fit about 305 times more slowly. % src: 85.6299 / 0.2810 from results/benchmark_test_task_b.csv [Fit s, Tree gini (ours) / (sklearn)]
     Errors concentrate near the tier threshold, at both price extremes and
     in districts with little training data. The main takeaway: careful
     from-scratch implementations reach library accuracy on this data; what
@@ -474,8 +474,8 @@ Inside every fold, the tier threshold and the SVM scaler are recomputed
 from that fold's training rows only, and every model sees the same folds
 and features. We report the mean $\pm$ sample standard deviation over
 folds. The subsample keeps the run practical: our tree takes about 10~s
-per fit at 16{,}000 rows % src: results/benchmark_cv_task_b.csv [Tree gini (ours), Fit s mean 10.27]
-and 87~s on the full training split. % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 86.75]
+per fit at 16{,}000 rows % src: results/benchmark_cv_task_b.csv [Tree gini (ours), Fit s mean 10.20]
+and 86~s on the full training split. % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 85.63]
 For the held-out test, each model is fit once on the full training split
 and scored once on the test split.
 
@@ -575,21 +575,61 @@ against 0.9637). % src: results/report_facts.csv [svm_linear_val_auc]
 Both SVMs are benchmarked.
 
 \subsection{Decision tree}
-Both tasks use one fixed tree configuration, set before any experiment
-and not tuned: maximum depth 10, % src: results/report_facts.csv [tree_task_a_max_depth, tree_task_b_max_depth]
-at least 10 rows to split a node, % src: results/report_facts.csv [tree_task_a_min_samples_split, tree_task_b_min_samples_split]
-at least 5 rows per leaf, % src: results/report_facts.csv [tree_task_a_min_samples_leaf, tree_task_b_min_samples_leaf]
-and no minimum impurity decrease. % src: benchmark.py:FALLBACK_CONFIGS, _tree_params (not set) -> decision_tree.py:DecisionTree.__init__ default 0.0
-These are the fixed values in \texttt{benchmark.py}; the pipeline runs no
-tree sweep, so nothing overrides them. % src: results/report_facts.csv [tree_task_a_source, tree_task_b_source]; run_all.py:_tree_tuning
-For Task~B we compare the two criteria in cross-validation: Gini and
-entropy reach the same F1, % src: results/benchmark_cv_task_b.csv [Tree gini (ours), F1 0.9069 ± 0.0060; Tree entropy (ours), F1 0.9072 ± 0.0035]
+\texttt{tree\_experiment.py} tunes our tree only, on train $\to$
+validation: each configuration is fit on a stratified sample of 16{,}000
+training rows % src: tree_experiment.py:run (n_samples = 16000, stratified by tier)
+and scored on the 13{,}697 validation rows; % src: results/report_facts.csv [n_val]
+the test split is not used. A full-split fit takes about 86~s % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 85.63]
+(Section~\ref{sec:results}), which rules out a sweep on all 63{,}919 rows. % src: results/report_facts.csv [n_train]
+The sweep has two steps, with \texttt{min\_samples\_split} = 10 throughout:
+\texttt{max\_depth} $\in \{2, 4, \dots, 12\}$ with
+\texttt{min\_samples\_leaf} = 1 (for Task~B with Gini and with entropy),
+then \texttt{min\_samples\_leaf} $\in \{1, 5, 20, 50\}$ at the chosen
+depth. % src: tree_experiment.py:run (depths, leaf sweep)
+In each step it takes the best validation score (F1 for Task~B, RMSE of
+log price for Task~A) and, among configurations within 0.002 of it, the
+smallest depth or, in the second step, the largest leaf size. % src: tree_experiment.py:_select, TOLERANCE = 0.002
+
+Fig.~\ref{fig:tree-depth} shows the depth step. Training scores keep
+improving with depth while validation scores flatten. For Task~B,
+validation F1 peaks at 0.912 with entropy at depth 12; % src: results/tree_experiment/tree_sweep_table.csv [B depth entropy 12, Val 0.9123]
+entropy at depth 10 (0.911) is within 0.002 and is chosen, % src: results/tree_experiment/tree_sweep_table.csv [B depth entropy 10, Val 0.9108]
+while Gini reaches 0.907 at depth 10. % src: results/tree_experiment/tree_sweep_table.csv [B depth gini 10, Val 0.9065]
+A leaf size of 5 scores 0.909, within 0.002 of 0.911, and replaces 1; % src: results/tree_experiment/tree_sweep_table.csv [B leaf entropy 10/5, Val 0.9093]
+20 and 50 fall to 0.904 and 0.901. % src: results/tree_experiment/tree_sweep_table.csv [B leaf 20 Val 0.9044, 50 Val 0.9010]
+For Task~A, validation RMSE falls up to the largest depth, 12 (0.253, % src: results/tree_experiment/tree_sweep_table.csv [A depth 12, Val 0.2533]
+against 0.259 at depth 10), % src: results/tree_experiment/tree_sweep_table.csv [A depth 10, Val 0.2592]
+and a leaf size of 5 lowers it to 0.247, % src: results/tree_experiment/tree_sweep_table.csv [A leaf 12/5, Val 0.2471]
+while 20 and 50 give 0.253 and 0.264. % src: results/tree_experiment/tree_sweep_table.csv [A leaf 20 Val 0.2533, 50 Val 0.2642]
+The chosen configurations are depth 12 with leaf size 5 for Task~A % src: results/report_facts.csv [tree_task_a_max_depth 12, tree_task_a_min_samples_leaf 5]
+and depth 10 with leaf size 5 for Task~B. % src: results/report_facts.csv [tree_task_b_max_depth 10, tree_task_b_min_samples_leaf 5]
+Task~A's depth sits at the edge of the grid, which stops at the
+benchmark's depth cap of 12. % src: benchmark.py:MAX_TREE_DEPTH
+With these configurations, validation scores still improve from 2{,}000
+to 16{,}000 training rows (Task~B F1 0.864 to 0.909, Task~A RMSE 0.311 to % src: results/tree_experiment/tree_learning_curve.csv [B 2000 Val 0.8641, 16000 Val 0.9093; A 2000 Val 0.3107, 16000 Val 0.2471]
+0.247), so the benchmark fits the trees on the full training split.
+
+The sweep records entropy as the better Task~B criterion; the benchmark % src: results/tree_selection.json [task_b_criterion entropy]
+fits both criteria with the chosen depth and leaf size. % src: benchmark.py:_task_b_models
+In cross-validation they reach the same F1, % src: results/benchmark_cv_task_b.csv [Tree gini (ours), F1 0.9069 ± 0.0060; Tree entropy (ours), F1 0.9072 ± 0.0035]
 $0.907 \pm 0.006$ and $0.907 \pm 0.004$, % src: results/benchmark_cv_task_b.csv [Tree gini (ours) / Tree entropy (ours), F1]
 while entropy ranks better (ROC-AUC $0.962 \pm 0.004$ % src: results/benchmark_cv_task_b.csv [Tree entropy (ours), ROC-AUC 0.9616 ± 0.0035]
 against $0.951 \pm 0.005$) % src: results/benchmark_cv_task_b.csv [Tree gini (ours), ROC-AUC 0.9512 ± 0.0046]
-and fits faster (9.1~s against 10.3~s per fold). % src: results/benchmark_cv_task_b.csv [Fit s, Tree entropy (ours) 9.0930, Tree gini (ours) 10.2740]
-We report the Gini tree as our main Task~B tree because that choice was
-fixed in advance; on F1 the data gives no reason to prefer either.
+and fits faster (8.9~s against 10.2~s per fold). % src: results/benchmark_cv_task_b.csv [Fit s, Tree entropy (ours) 8.9349, Tree gini (ours) 10.1966]
+The results and the error analysis use the Gini tree as the main Task~B
+tree, as planned before the sweep; its validation F1 is 0.004 below % src: 0.9108 - 0.9065 from results/tree_experiment/tree_sweep_table.csv [B depth 10, entropy / gini]
+entropy's, a gap that cross-validation does not confirm.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/tree_depth_curves.pdf}
+  \caption{Tree tuning, depth step: training (dashed) and validation
+  (solid) score against \texttt{max\_depth}, with
+  \texttt{min\_samples\_leaf} = 1, fit on 16{,}000 training rows. Left:
+  Task~A RMSE of log price (lower is better). Right: Task~B F1 for Gini
+  and entropy.}
+  \label{fig:tree-depth}
+\end{figure*}
 
 % =====================================================================
 \section{Results}
@@ -608,11 +648,11 @@ fixed in advance; on F1 the data gives no reason to prefer either.
 \end{table*}
 
 Table~\ref{tab:main} lists every model. On Task~A our tree reaches a test
-$R^2$ of 0.853 on log price % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
-(0.753 in AZN), % src: results/benchmark_test_task_a.csv [Tree (ours), R2 AZN 0.7531]
-against 0.852 for the scikit-learn tree; % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8522]
-in cross-validation the two score $0.831 \pm 0.006$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log 0.8307 ± 0.0056]
-and $0.831 \pm 0.005$. % src: results/benchmark_cv_task_a.csv [Tree (sklearn), R2 log 0.8310 ± 0.0049]
+$R^2$ of 0.870 on log price % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8699]
+(0.764 in AZN), % src: results/benchmark_test_task_a.csv [Tree (ours), R2 AZN 0.7637]
+as does the scikit-learn tree (0.870); % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8704]
+in cross-validation the two score $0.838 \pm 0.008$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log 0.8378 ± 0.0078]
+and $0.839 \pm 0.008$. % src: results/benchmark_cv_task_a.csv [Tree (sklearn), R2 log 0.8388 ± 0.0084]
 The gap between log scale and AZN comes from the most expensive
 listings (Section~\ref{sec:errors}).
 
@@ -654,10 +694,10 @@ split first on floor area, and agree on 99.9\% of test labels. % src: results/tr
 The root thresholds differ only by convention: 90.1~m\textsuperscript{2} % src: results/tree_comparison.csv [Task B gini, root ours]
 for ours, an observed training value, and 90.15~m\textsuperscript{2} % src: results/tree_comparison.csv [Task B gini, root sklearn]
 for scikit-learn, the midpoint between neighbouring values. The Task~A
-trees both have 656 leaves; % src: results/tree_comparison.csv [Task A tree, leaves ours/sklearn]
-their predictions correlate at 0.9989, % src: results/tree_comparison.csv [Task A tree, pred corr 0.99886]
-differ by 0.0015 log units on average, % src: results/tree_comparison.csv [Task A tree, mean |diff| log 0.00148]
-and 99.6\% agree within 0.01 log units (about 1\% of the price). % src: results/tree_comparison.csv [Task A tree, within 0.01 log % 99.63]
+trees both have depth 12, with 1{,}463 and 1{,}461 leaves; % src: results/tree_comparison.csv [Task A tree, depth 12/12, leaves 1463/1461]
+their predictions correlate at 0.9984, % src: results/tree_comparison.csv [Task A tree, pred corr 0.99836]
+differ by 0.0027 log units on average, % src: results/tree_comparison.csv [Task A tree, mean |diff| log 0.00273]
+and 98.5\% agree within 0.01 log units (about 1\% of the price). % src: results/tree_comparison.csv [Task A tree, within 0.01 log % 98.55]
 The feature importances correlate above 0.9999 for all three pairs % src: results/tree_comparison.csv [importance corr, min 0.99996]
 (Fig.~\ref{fig:importance}). Floor area dominates both tasks, followed
 by longitude and latitude, in line with the EDA.
@@ -673,22 +713,22 @@ by longitude and latitude, in line with the EDA.
 \end{figure*}
 
 \textit{Speed.} Matching the models' quality costs time for the tree. On
-the full training split our Gini tree fits in 86.8~s % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 86.7520]
-against 0.31~s for scikit-learn, % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), Fit s 0.3128]
-about 277 times slower. % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+the full training split our Gini tree fits in 85.6~s % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 85.6299]
+against 0.28~s for scikit-learn, % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), Fit s 0.2810]
+about 305 times slower. % src: 85.6299 / 0.2810 from results/benchmark_test_task_b.csv
 Fig.~\ref{fig:scaling} shows the growth with $n$: from 2{,}000 to
-16{,}000 rows our tree's fit time grows 15.0-fold % src: results/benchmark_scaling.csv [Tree gini (ours), 10.3910 / 0.6940]
-for 8 times the data, scikit-learn's 10.4-fold, % src: results/benchmark_scaling.csv [Tree gini (sklearn), 0.06312 / 0.006055]
-and the two linear SVM solvers 8.6-fold and 9.3-fold, close to % src: results/benchmark_scaling.csv [Pegasos linear 0.6344/0.07362 = 8.62; SGD 0.05857/0.006320 = 9.27]
-linearly. Linear Pegasos fits the full training split in 2.7~s, % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), Fit s 2.6653]
-against 0.29~s for SGD. % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), Fit s 0.2875]
+16{,}000 rows our tree's fit time grows 15.0-fold % src: results/benchmark_scaling.csv [Tree gini (ours), 10.4055 / 0.6941]
+for 8 times the data, scikit-learn's 10.3-fold, % src: results/benchmark_scaling.csv [Tree gini (sklearn), 0.06209 / 0.006013]
+and the two linear SVM solvers 8.6-fold and 8.7-fold, close to % src: results/benchmark_scaling.csv [Pegasos linear 0.6455/0.07482 = 8.63; SGD 0.05418/0.006210 = 8.72]
+linearly. Linear Pegasos fits the full training split in 2.7~s, % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), Fit s 2.7089]
+against 0.29~s for SGD. % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), Fit s 0.2866]
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{figures/benchmark_scaling.pdf}
   \caption{Fit time against training size (log-log), Task~B, one fit per
   point. Slope: fitted exponent $k$ in time $\propto n^k$. Our tree grows
-  faster than linearly; both SVM solvers grow close to linearly.} % src: results/benchmark_meta.json [scaling_slopes: 1.29, 1.12, 1.03, 1.06]
+  faster than linearly; both SVM solvers grow close to linearly.} % src: results/benchmark_meta.json [scaling_slopes: 1.29, 1.12, 1.01, 1.04]
   \label{fig:scaling}
 \end{figure}
 
@@ -717,17 +757,17 @@ close to an arbitrary cut-off.
 \end{figure}
 
 \textit{Price extremes.} On Task~A the median absolute percentage error
-is 14.3\% in the cheapest decile % src: results/error_analysis.md [By true-price decile, D1, A MdAPE % 14.27]
-and 19.6\% in the most expensive, % src: results/error_analysis.md [By true-price decile, D10, A MdAPE % 19.64]
-against 9.3--12.5\% for deciles 2--9 % src: results/error_analysis.md [By true-price decile, D2-D9, A MdAPE % 9.29-12.49]
+is 11.0\% in the cheapest decile % src: results/error_analysis.md [By true-price decile, D1, A MdAPE % 10.96]
+and 18.1\% in the most expensive, % src: results/error_analysis.md [By true-price decile, D10, A MdAPE % 18.15]
+against 7.9--11.9\% for deciles 2--9 % src: results/error_analysis.md [By true-price decile, D2-D9, A MdAPE % 7.94-11.92]
 (Fig.~\ref{fig:deciles}). The errors are biased towards the middle: the
-cheapest decile is over-predicted by a median 7.8\% % src: results/error_analysis.md [By true-price decile, D1, A median bias % 7.84]
-and the most expensive under-predicted by 13.8\%. % src: results/error_analysis.md [By true-price decile, D10, A median bias % -13.81]
-A tree of depth 10 predicts leaf means, so prices at the extremes are
+cheapest decile is over-predicted by a median 5.2\% % src: results/error_analysis.md [By true-price decile, D1, A median bias % 5.19]
+and the most expensive under-predicted by 12.2\%. % src: results/error_analysis.md [By true-price decile, D10, A median bias % -12.20]
+A tree of depth 12 predicts leaf means, so prices at the extremes are
 pulled towards the average of their leaf. The effect is strongest for
 the 138 most expensive listings (top 1\%, from 1{,}300{,}000~AZN): % src: results/error_analysis.md [Findings, bullet 4: n = 138, price >= 1,300,000 AZN]
-median absolute error 33.9\% % src: results/error_analysis.md [Top 1% most expensive listings, A MdAPE % 33.88]
-and a median under-prediction of 33.6\%. % src: results/error_analysis.md [Top 1% most expensive listings, A median bias % -33.60]
+median absolute error 33.5\% % src: results/error_analysis.md [Top 1% most expensive listings, A MdAPE % 33.54]
+and a median under-prediction of 31.0\%. % src: results/error_analysis.md [Top 1% most expensive listings, A median bias % -31.02]
 For Task~B the same listings are easy (tree error 0.0\%), % src: results/error_analysis.md [Top 1% most expensive listings, B error % tree 0.00]
 being far from the threshold.
 
@@ -743,11 +783,11 @@ being far from the threshold.
 
 \textit{Sparse districts.} Task~A error grows as a district's training
 data shrinks. Grouping test listings by how many \emph{training} listings
-their district has, the median absolute error is 11.4\% % src: results/error_analysis.md [By district size, >= 1000, A MdAPE % 11.35]
+their district has, the median absolute error is 9.8\% % src: results/error_analysis.md [By district size, >= 1000, A MdAPE % 9.80]
 for districts with 1{,}000 or more training rows, % src: results/error_analysis.md [By district size, bin >= 1000]
-13.1\% for 200--999, % src: results/error_analysis.md [By district size, 200-999, A MdAPE % 13.05]
-18.6\% for 50--199 % src: results/error_analysis.md [By district size, 50-199, A MdAPE % 18.60]
-and 20.0\% for 1--49. % src: results/error_analysis.md [By district size, 1-49, A MdAPE % 20.03]
+11.2\% for 200--999, % src: results/error_analysis.md [By district size, 200-999, A MdAPE % 11.15]
+16.6\% for 50--199 % src: results/error_analysis.md [By district size, 50-199, A MdAPE % 16.55]
+and 20.2\% for 1--49. % src: results/error_analysis.md [By district size, 1-49, A MdAPE % 20.18]
 Task~B shows no such trend: the tree's error rate is 6.9\% in the % src: results/error_analysis.md [By district size, >= 1000, B error % tree 6.91]
 largest districts, 11.8\% for 50--199 % src: results/error_analysis.md [By district size, 50-199, B error % tree 11.80]
 and 5.8\% for 1--49, whose listings are mostly cheap (15.7\% premium) % src: results/error_analysis.md [By district size, 1-49, B error % tree 5.76, B premium % 15.71]
@@ -755,17 +795,18 @@ and therefore far from the threshold.
 One test listing comes from a district with no training rows. % src: results/error_analysis.md [By district size, 0 (unseen in train), n test 1]
 
 \textit{Categories.} Houses and villas are the hardest large group, with
-a median absolute error of 19.1\% % src: results/error_analysis.md [By category, House / villa, A MdAPE % 19.09]
-against 11.3\% for new-build % src: results/error_analysis.md [By category, New build, A MdAPE % 11.33]
-and 10.3\% for old-build apartments. % src: results/error_analysis.md [By category, Old build, A MdAPE % 10.25]
-Offices score 34.4\%, % src: results/error_analysis.md [By category, Office, A MdAPE % 34.36]
+a median absolute error of 17.7\% % src: results/error_analysis.md [By category, House / villa, A MdAPE % 17.73]
+against 9.5\% for new-build % src: results/error_analysis.md [By category, New build, A MdAPE % 9.54]
+and 9.0\% for old-build apartments. % src: results/error_analysis.md [By category, Old build, A MdAPE % 9.04]
+Offices score 27.5\%, % src: results/error_analysis.md [By category, Office, A MdAPE % 27.51]
 but there are only 25 of them in the test set. % src: results/error_analysis.md [By category, Office, n test 25]
 
-\textit{Worst listings.} Nine of the ten worst Task~A listings are houses % src: results/error_analysis.md [10 worst Task A listings, category: 9 x House / villa]
-or villas whose price differs from our prediction by a factor of 4.8 % src: results/error_analysis/worst_task_a_listings.csv [houses: max(pred/true, true/pred) 4.77 to 8.69]
-to 8.7 in either direction. Some look like data-entry errors rather than model failures,
-such as a seven-room house with 11~m\textsuperscript{2} of floor area on % src: results/error_analysis.md [10 worst Task A listings, clean_index 90432, rooms 7, area_m2 11]
-310 sot, listed at 280{,}000~AZN. % src: results/error_analysis.md [10 worst Task A listings, clean_index 90432, land_sot 310, price 280,000]
+\textit{Worst listings.} Eight of the ten worst Task~A listings are houses % src: results/error_analysis.md [10 worst Task A listings, category: 8 x House / villa]
+or villas whose price differs from our prediction by a factor of 5.5 % src: results/error_analysis/worst_task_a_listings.csv [houses: max(pred/true, true/pred) 5.54 to 8.29]
+to 8.3 in either direction. Some look like data-entry errors rather than model failures,
+such as a six-room house with 350~m\textsuperscript{2} of floor area listed at % src: results/error_analysis.md [10 worst Task A listings, clean_index 46895, rooms 6, area_m2 350]
+89{,}000~AZN, % src: results/error_analysis.md [10 worst Task A listings, clean_index 46895, price 89,000]
+less than the median one-room listing (105{,}500~AZN). % src: results/eda_summary.csv [median_price_rooms_1]
 No model can price such listings, and they inflate RMSE in AZN.
 
 \textit{What the SVM uses.} The final linear SVM has
@@ -780,20 +821,12 @@ standard (all weights: \url{results/error_analysis/svm_linear_weights.csv}). % s
 \section{Limitations}
 \label{sec:limits}
 \begin{itemize}
-  \item \textit{The trees were not tuned.} Both tasks use the fixed
-  configuration in \texttt{src/benchmark.py} % src: results/report_facts.csv [tree_task_a_source, tree_task_b_source]
-  (maximum depth 10, % src: results/report_facts.csv [tree_task_a_max_depth, tree_task_b_max_depth]
-  minimum 10 samples to split, % src: results/report_facts.csv [tree_task_a_min_samples_split, tree_task_b_min_samples_split]
-  minimum 5 per leaf), % src: results/report_facts.csv [tree_task_a_min_samples_leaf, tree_task_b_min_samples_leaf]
-  because the pipeline contains no tree sweep on the real data, while the
-  SVMs were tuned on validation. The trees' results are therefore not their best, and the
-  tuning effort between the two model families is unequal.
   \item \textit{Cross-validation uses a subsample.} CV uses 20{,}000 % src: results/report_facts.csv [cv_rows]
   of the 77{,}616 available rows, % src: results/report_facts.csv [cv_pool_rows]
   so each fold trains on 16{,}000 rows, % src: results/report_facts.csv [cv_fit_rows_per_fold]
   a quarter of the full training split. CV scores are
-  correspondingly lower than the test scores (Task~A $R^2$ $0.831$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log mean 0.8307]
-  against $0.853$) % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
+  correspondingly lower than the test scores (Task~A $R^2$ $0.838$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log mean 0.8378]
+  against $0.870$) % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8699]
   and describe the variability of a smaller-data model; for RFF Pegasos
   the smaller folds are enough to break training (Section~\ref{sec:tuning}).
   \item \textit{One-hot categories come from all rows.} The encoding is
@@ -809,12 +842,14 @@ standard (all weights: \url{results/error_analysis/svm_linear_weights.csv}). % s
   come from the training median. On this data both medians are
   215{,}000~AZN, % src: results/report_facts.csv [full_data_median, tier_threshold_train_median]
   so the two labelings differ on 0 listings. % src: results/report_facts.csv [labels_differ_full_vs_train_median]
-  \item \textit{Our tree is slow.} It is about 277 times slower than % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+  \item \textit{Our tree is slow.} It is about 305 times slower than % src: 85.6299 / 0.2810 from results/benchmark_test_task_b.csv
   scikit-learn on the full training split and grows faster than
   linearly with $n$ (Fig.~\ref{fig:scaling}). For every candidate
   threshold it recomputes the impurity from scratch instead of sweeping
-  sorted values with running sums. This forced the CV subsample and left
-  no budget to tune the tree.
+  sorted values with running sums. This forced the CV subsample and
+  limited the tree sweep to 16{,}000 training rows and a coarse grid; % src: tree_experiment.py:run (n_samples, depths)
+  the Task~A depth stops at the grid's largest value, 12, % src: results/report_facts.csv [tree_task_a_max_depth 12]
+  so a deeper tree might do better.
   \item \textit{Two fields are filled with 0.} For the 15{,}338 listings % src: results/report_facts.csv [rows_no_floor_filled_0]
   without a floor (15{,}188 houses and 150 offices), % src: results/report_facts.csv [rows_no_floor_house, rows_no_floor_office]
   floor and building height are set to 0, with a \texttt{has\_floor}
@@ -829,7 +864,7 @@ standard (all weights: \url{results/error_analysis/svm_linear_weights.csv}). % s
 Our from-scratch decision tree and Pegasos SVM reach the accuracy of
 matched scikit-learn models on bina.az listings: each is within 0.007 F1 % src: results/error_analysis.md [Findings, bullet 1]
 of its best baseline, and our trees reproduce scikit-learn's almost split
-for split. The tree is the better model on both tasks, with test $R^2$ 0.853 % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
+for split. The tree is the better model on both tasks, with test $R^2$ 0.870 % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8699]
 on log price and F1 0.926 on the price tier, % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9258]
 and floor area and location explain most of its decisions. On validation
 the linear SVM narrowly beat the Fourier-feature SVM, and only the linear
@@ -838,10 +873,10 @@ best validation F1 needs more Pegasos updates than a cross-validation
 fold provides. The remaining errors sit at
 the tier threshold, at the price extremes and in districts with few
 listings, and a few come from implausible listings. The price of writing
-the tree ourselves is speed: it fits about 277 times more slowly. % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+the tree ourselves is speed: it fits about 305 times more slowly. % src: 85.6299 / 0.2810 from results/benchmark_test_task_b.csv
 Future work: ensembles of our trees (bagging or boosting), a vectorised
-split search over sorted values with running sums, which would also make
-a proper tree sweep affordable, and better location features, such as
+split search over sorted values with running sums, which would let the
+tree sweep use the full training split and deeper trees, and better location features, such as
 distance to the city centre or target statistics of each district
 computed on training folds.
 
@@ -852,9 +887,8 @@ loading, cleaning, parsing of floor and land area, leakage removal,
 encoding, the stratified split and the training-only tier threshold.
 Ibrahim Aghazade implemented the from-scratch decision tree
 (\texttt{decision\_tree.py}) with Gini, entropy and MSE criteria, the four
-stopping parameters, node statistics and the scikit-learn match test; the
-tree hyperparameter sweep was not completed, so the final tree uses a fixed
-configuration. Sahib Aliyev implemented the Pegasos SVM
+stopping parameters, node statistics and the scikit-learn match test, and
+the tree hyperparameter study (\texttt{tree\_experiment.py}). Sahib Aliyev implemented the Pegasos SVM
 (\texttt{svm.py}) with margin, support vectors and random Fourier
 features, plus the sweep and plotting tools (\texttt{svm\_experiment.py},
 \texttt{svm\_plots.py}) and their tests. Khizri Sakhrayev implemented the

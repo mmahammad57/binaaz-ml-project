@@ -54,14 +54,12 @@ from .svm import PegasosSVM
 #       {"configs": {"linear": {"kernel", "lambda_", "gamma", "n_components", "n_epochs"},
 #                    "rff": {...same keys...}},
 #        "final": "linear" | "rff", ...}
-#   results/tree_final_config.json  optional, from a tree sweep (none is run
-#       by run_all at present)
+#   results/tree_final_config.json  written by src/tree_experiment.py
 #       {"config": {"tree_task_a": {"max_depth", "min_samples_split", "min_samples_leaf"},
 #                   "tree_task_b": {...same keys...}}, ...}
-# Any section without a file uses FALLBACK_CONFIGS below. For the trees this
-# is the configuration actually used: fixed before any experiment (depth 10
-# with small minimum node sizes, under the depth cap below) and not tuned.
-# The SVM entries are only used if src/svm_tuning.py has not been run.
+# Any section without a file uses FALLBACK_CONFIGS below: a default set
+# before any experiment (depth 10 with small minimum node sizes, under the
+# depth cap below), used only if the corresponding tuning stage has not run.
 FALLBACK_CONFIGS = {
     # Task A: regression on log(price).
     "tree_task_a": {
