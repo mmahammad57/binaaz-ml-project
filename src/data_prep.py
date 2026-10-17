@@ -132,7 +132,12 @@ def make_tier_label(y_price, threshold=None):
     Return (y_tier, threshold).  The threshold must come from TRAIN only
     (no peeking at val/test) to avoid leakage.
     """
-    raise NotImplementedError("TODO: derive the price-tier label")
+    if threshold is None:
+        threshold = float(np.median(y_price))
+
+    y_tier = (y_price >= threshold).astype(int)
+    print(f"[Data Prep] Price-tier binary labels generated with threshold: {threshold:.2f} AZN")
+    return y_tier, threshold
 
 
 def train_val_test_split(X, y, val_size=0.15, test_size=0.15, seed=SEED):
@@ -157,3 +162,4 @@ if __name__ == '__main__':
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
     X, y, features = make_features(cleaned_df)
+    y_tier, median_thresh = make_tier_label(y)
