@@ -69,6 +69,27 @@ def plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir):
     _save(fig, figures_dir, "tree_depth_curves")
 
 
+def plot_learning_curve(curve, configs, figures_dir):
+    """
+    Train (dashed) and validation (solid) score of the chosen configs against
+    the number of training rows; one panel per task, one report column wide.
+    """
+    fig, axes = _figure((3.5, 4.4), nrows=2)
+    panels = (("A_Regression", "Task A", "RMSE (log price)", configs["A"]),
+              ("B_Classification", "Task B", "F1 (premium)", configs["B"]))
+    for ax, (task, name, ylabel, cfg) in zip(axes, panels):
+        rows = curve[curve["Task"] == task]
+        ax.plot(rows["Train_Size"], rows["Train_Metric"], color=SLOTS[0], linewidth=1.5, linestyle="--",
+                label="Train")
+        ax.plot(rows["Train_Size"], rows["Val_Metric"], color=SLOTS[0], linewidth=1.5, marker="o",
+                markersize=4, label="Validation")
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(rows["Train_Size"], [f"{k / 1000:g}k" for k in rows["Train_Size"]])
+        ax.minorticks_off()
+        _label(ax, f"{name}: {cfg}", "Training rows", ylabel)
+    _save(fig, figures_dir, "tree_learning_curve")
+
+
 TOLERANCE = 0.002   # validation-score tolerance of the selection rule
 
 
@@ -257,6 +278,28 @@ def run(quick: bool = False):
     chosen = _select(leaf_rows, higher_is_better=False, simplicity=lambda r: -r["Min_Samples_Leaf"])
     best_a_config["min_samples_leaf"] = chosen["Min_Samples_Leaf"]
 
+    # --- LEARNING CURVE: the chosen configs on 1/8, 1/4, 1/2 and all of the
+    # subsample (2k, 4k, 8k, 16k rows in full mode). The subsample is in random
+    # order, so each prefix is a random subset; scored on validation only.
+    sizes = [len(X_train) // 8, len(X_train) // 4, len(X_train) // 2, len(X_train)]
+    curve_rows = []
+    for k in sizes:
+        tree = DecisionTree(task="regression", criterion="mse", max_depth=best_a_config["max_depth"],
+                            min_samples_split=10, min_samples_leaf=best_a_config["min_samples_leaf"])
+        tree.fit(X_train[:k], y_train_log[:k])
+        curve_rows.append({"Task": "A_Regression", "Train_Size": k,
+                           "Train_Metric": rmse(y_train_log[:k], tree.predict(X_train[:k])),
+                           "Val_Metric": rmse(y_val_log, tree.predict(X_val))})
+        tree = DecisionTree(task="classification", criterion=best_b_config["criterion"],
+                            max_depth=best_b_config["max_depth"], min_samples_split=10,
+                            min_samples_leaf=best_b_config["min_samples_leaf"])
+        tree.fit(X_train[:k], y_train_tier[:k])
+        curve_rows.append({"Task": "B_Classification", "Train_Size": k,
+                           "Train_Metric": precision_recall_f1(y_train_tier[:k], tree.predict(X_train[:k]))[2],
+                           "Val_Metric": precision_recall_f1(y_val_tier, tree.predict(X_val))[2]})
+    curve = pd.DataFrame(curve_rows)
+    curve.to_csv(os.path.join(table_dir, "tree_learning_curve.csv"), index=False)
+
     # --- OUTPUTS (JSON/CSV) ---
     print("\n--- Final Selected Configurations ---")
     selection_rule = (f"In each sweep step, the best validation score (Task A: RMSE of log price, lower is better; "
@@ -293,6 +336,10 @@ def run(quick: bool = False):
         
     # --- FIGURES (Part 3) ---
     plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir)
+    configs = {"A": f"depth {best_a_config['max_depth']}, leaf {best_a_config['min_samples_leaf']}",
+               "B": f"{best_b_config['criterion']}, depth {best_b_config['max_depth']}, "
+                    f"leaf {best_b_config['min_samples_leaf']}"}
+    plot_learning_curve(curve, configs, figures_dir)
     print(f"Figures saved to {figures_dir}")
 
 if __name__ == "__main__":
