@@ -488,19 +488,37 @@ def compare_trees(fitted, X_te, names):
     for label, ours_name, sk_name, task in pairs:
         ours, sk = fitted[ours_name], fitted[sk_name]
         p_ours, p_sk = ours.predict(X_te), sk.predict(X_te)
-        agree = np.isclose(p_ours, p_sk, rtol=1e-9, atol=0) if task == "regression" else p_ours == p_sk
         imp_ours = ev.tree_feature_importances(ours, len(names))
         imp_sk = sk.feature_importances_
         corr = float(np.corrcoef(imp_ours, imp_sk)[0, 1]) if imp_ours.std() and imp_sk.std() else float("nan")
         depth, leaves = _our_depth_and_leaves(ours.root)
-        rows[label] = {
+        row = {
             "depth ours": depth, "depth sklearn": sk.get_depth(),
             "leaves ours": leaves, "leaves sklearn": sk.get_n_leaves(),
             "root ours": f"{names[ours.root.feature]} <= {ours.root.threshold:.6g}",
             "root sklearn": f"{names[sk.tree_.feature[0]]} <= {sk.tree_.threshold[0]:.6g}",
-            "test agreement %": 100.0 * agree.mean(),
-            "importance corr": corr,
         }
+        if task == "regression":
+            # Exact agreement is the wrong measure here. A regression tree
+            # predicts the mean log price of its leaf, a continuous value, so
+            # "equal" only tests whether a listing lands in a leaf with exactly
+            # the same training rows. One split chosen differently deep in the
+            # tree (a near-tie, or a test value between our threshold and
+            # sklearn's midpoint) re-partitions a few training rows and shifts
+            # the leaf mean by a tiny amount, and every listing in that leaf
+            # then counts as "disagreeing" although the predictions differ by
+            # far less than any error that matters. How CLOSE the predictions
+            # are is the right question: correlation, mean absolute gap, and
+            # the share within 0.01 log units (about 1% of the price).
+            gap = np.abs(p_ours - p_sk)
+            row["pred corr"] = float(np.corrcoef(p_ours, p_sk)[0, 1])
+            row["mean |diff| log"] = float(gap.mean())
+            row["within 0.01 log %"] = 100.0 * float((gap <= 0.01).mean())
+        else:
+            # Class labels are discrete, so exact agreement is meaningful.
+            row["test agreement %"] = 100.0 * float((p_ours == p_sk).mean())
+        row["importance corr"] = corr
+        rows[label] = row
         importances[f"{_slug(label)}_ours"] = imp_ours
         importances[f"{_slug(label)}_sklearn"] = imp_sk
     return pd.DataFrame.from_dict(rows, orient="index"), pd.DataFrame(importances)

@@ -20,8 +20,11 @@ and its handoff asks to "adjust the search using validation evidence" and
 The docs' lambdas are a subset; its absolute gammas of 1 and 10 would be
 ~166x and ~1660x 'scale' for our 166 standardized features.
 
-Both kernels' best configurations are kept (the benchmark runs both); the
-"final" model is the one with the higher validation F1 (tie -> linear).
+Selection, per kernel: among configs within F1_TOLERANCE (0.005) validation
+F1 of that kernel's best, take the one with the LARGEST lambda (see
+_select_stable for why). Both kernels' chosen configs are kept (the benchmark
+runs both); the "final" model is the chosen config with the higher validation
+F1 (tie -> linear).
 
 Outputs
     results/svm_tuning/{rff,linear}/validation.csv, sweep.json   (save_sweep_results)
@@ -62,7 +65,13 @@ GAMMA_MULTIPLIERS = (0.1, 1.0, 10.0)       # times 'scale' = 1 / n_features
 N_COMPONENTS = 500                          # docs/SVM.md default
 N_EPOCHS = 20                               # docs/SVM.md fit and sweep examples
 QUICK_TRAIN_ROWS = 5_000
+F1_TOLERANCE = 0.005                        # "near-best" band for _select_stable
 KERNEL_LABEL = {"linear": "linear", "rff": "RFF"}
+SELECTION_RULE = (
+    f"per kernel: among configs within {F1_TOLERANCE} validation F1 of the best, the largest "
+    "lambda (Pegasos needs T >> 1/lambda updates; lambda=1e-6 did not converge on 16k-row "
+    "CV folds); final = chosen config with the higher validation F1, tie -> linear"
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -106,6 +115,38 @@ def sweep_linear(X_train, y_train, X_val, y_val, *, metric, lambdas, n_epochs, h
         "greater_is_better": True, "n_train": len(X_train), "n_validation": len(X_val),
         "results": results,
     }
+
+
+def _select_stable(sweep, tolerance=F1_TOLERANCE):
+    """
+    Among configs within `tolerance` validation F1 of the sweep's best, pick
+    the one with the largest lambda (ties in lambda: higher F1).
+
+    Why: Pegasos' step size is 1/(lambda * t) and its guarantee is
+    O(1/(lambda * T)) after T updates, so it needs T >> 1/lambda. With
+    lambda = 1e-6, 1/lambda = 1e6 updates, but a 16k-row CV fold gives only
+    16,000 x 20 epochs = 320k: the RFF model picked by raw F1 (lambda = 1e-6)
+    scored 0.908 F1 on validation yet 0.850 +/- 0.035 across CV folds. When F1
+    is near-tied, the larger lambda converges in far fewer updates and is the
+    more regularized model, so the choice is stable across training sizes.
+
+    The sweep's own "selected" fields are pointed at the chosen row, so the
+    saved sweep.json and svm_plots' star refer to it; the raw F1 arg-max is
+    kept as best_f1_params / best_f1_score.
+    """
+    rows = sweep["results"]
+    top = max(r["validation_score"] for r in rows)
+    near = [r for r in rows if r["validation_score"] >= top - tolerance]
+    chosen = max(near, key=lambda r: (r["lambda_"], r["validation_score"]))
+
+    sweep["best_f1_params"], sweep["best_f1_score"] = dict(sweep["best_params"]), sweep["best_score"]
+    sweep["best_params"] = {**sweep["best_params"], "lambda_": chosen["lambda_"]}
+    if chosen["gamma"] is not None:
+        sweep["best_params"]["gamma"] = chosen["gamma"]
+    sweep["best_score"] = chosen["validation_score"]
+    sweep["best_model"] = None      # that fitted model was the raw arg-max; not reused
+    sweep["selection_rule"] = SELECTION_RULE
+    return chosen
 
 
 def _best_row(sweep):
@@ -170,7 +211,7 @@ def _marker_label(kernel, final_kernel):
     """The star is 'final model' only when this kernel's best config won overall."""
     if kernel == final_kernel:
         return "Selected = final model"
-    return f"Best {KERNEL_LABEL[kernel]} config (final model is {KERNEL_LABEL[final_kernel]})"
+    return f"Chosen {KERNEL_LABEL[kernel]} config (final model is {KERNEL_LABEL[final_kernel]})"
 
 
 def plot_linear_sweep(sweep, final_kernel, out_dir, data_label):
@@ -312,10 +353,11 @@ def run_tuning(quick: bool = False) -> dict:
     timings["rff sweep"] = time.perf_counter() - start
     print(f"RFF sweep: {len(LAMBDAS) * len(gammas)} configs in {timings['rff sweep']:.1f}s")
 
-    # Selection: each kernel keeps its best config; the final model is the one
-    # with the higher validation F1, a tie going to linear (simpler, and its
+    # Selection: per kernel, the largest lambda within F1_TOLERANCE of the best
+    # (_select_stable explains why); the final model is the chosen config with
+    # the higher validation F1, a tie going to linear (simpler, and its
     # weights map to named features).
-    best = {kernel: _best_row(sweep) for kernel, sweep in sweeps.items()}
+    best = {kernel: _select_stable(sweep) for kernel, sweep in sweeps.items()}
     final = "rff" if best["rff"]["validation_score"] > best["linear"]["validation_score"] else "linear"
 
     # Save sweeps, figures and the chosen configs.
@@ -324,7 +366,7 @@ def run_tuning(quick: bool = False) -> dict:
         save_sweep_results(sweep, results_dir / "svm_tuning" / kernel)
     base = (f"bina.az tier, train={len(y_tr):,}{' (quick subsample)' if quick else ''}, "
             f"validation={len(y_val):,}")
-    rff_note = "" if final == "rff" else " | star = best RFF config; final model is linear"
+    rff_note = " | star = chosen RFF config" + ("" if final == "rff" else "; final model is linear")
     figure_paths = _plot_rff_with_kernel_names(sweeps["rff"], figures_dir, base + rff_note)
     figure_paths.update(plot_linear_sweep(sweeps["linear"], final, figures_dir, base))
     figure_paths.update(plot_final_convergence(best[final], final, figures_dir, base))
@@ -341,10 +383,14 @@ def run_tuning(quick: bool = False) -> dict:
         "configs": configs,
         "final": final,
         "selection": {
-            "metric": "validation F1 (premium = 1); final = higher F1, tie -> linear",
+            "metric": "validation F1 (premium = 1)",
+            "rule": SELECTION_RULE,
             **{kernel: {"validation_f1": row["validation_score"], "validation_roc_auc": row["roc_auc"],
                         "gamma_x_scale": None if row["gamma"] is None else round(row["gamma"] / scale, 6),
-                        "lambda_on_grid_edge": row["lambda_"] in (min(LAMBDAS), max(LAMBDAS))}
+                        "lambda_on_grid_edge": row["lambda_"] in (min(LAMBDAS), max(LAMBDAS)),
+                        "max_f1_config": {k: sweeps[kernel]["best_f1_params"][k]
+                                          for k in ("lambda_", "gamma") if k in sweeps[kernel]["best_f1_params"]},
+                        "max_f1": sweeps[kernel]["best_f1_score"]}
                for kernel, row in best.items()},
         },
         "search_space": {"lambdas": list(LAMBDAS), "kernels": ["linear", "rff"],
@@ -362,19 +408,29 @@ def run_tuning(quick: bool = False) -> dict:
 
     table = _table(sweeps, scale)
     table.to_csv(results_dir / "svm_tuning" / "sweep_table.csv", index=False)
-    marks = np.full(len(table), "", dtype=object)
-    for kernel, row in best.items():
-        hit = (table.kernel == kernel) & (table.lambda_ == row["lambda_"])
+    def rows_matching(kernel, params):
+        hit = (table.kernel == kernel) & (table.lambda_ == params["lambda_"])
         if kernel == "rff":
-            hit &= table.gamma == row["gamma"]
-        marks[hit.to_numpy()] = "FINAL" if kernel == final else "best"
+            hit &= table.gamma == params["gamma"]
+        return hit.to_numpy()
+
+    marks = np.full(len(table), "", dtype=object)
+    for kernel, sweep in sweeps.items():
+        marks[rows_matching(kernel, sweep["best_f1_params"])] = "maxF1"
+        marks[rows_matching(kernel, sweep["best_params"])] = "FINAL" if kernel == final else "chosen"
     table.insert(0, "pick", marks)
     with pd.option_context("display.width", 200, "display.max_columns", 20):
         print("\n" + table.drop(columns="gamma").to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    print(f"\nSelection rule: {SELECTION_RULE}")
     for kernel, row in best.items():
-        print(f"best {kernel:<6}: {json.dumps(configs[kernel])} | val F1 {row['validation_score']:.4f}, "
-              f"ROC-AUC {row['roc_auc']:.4f}")
-    print(f"final model (higher validation F1): {final}")
+        sweep = sweeps[kernel]
+        moved = ("" if sweep["best_f1_params"]["lambda_"] == row["lambda_"]
+                 and sweep["best_f1_params"].get("gamma") == sweep["best_params"].get("gamma")
+                 else f"  (max-F1 config lambda_={sweep['best_f1_params']['lambda_']:g}, "
+                      f"F1 {sweep['best_f1_score']:.4f})")
+        print(f"chosen {kernel:<6}: {json.dumps(configs[kernel])} | val F1 {row['validation_score']:.4f}, "
+              f"ROC-AUC {row['roc_auc']:.4f}{moved}")
+    print(f"final model (higher validation F1 of the chosen configs): {final}")
     print("Wrote: " + str(config_path.relative_to(ROOT)) + ", " + ", ".join(
         str(p["png"].relative_to(ROOT)) for p in figure_paths.values()))
     timings["total"] = time.perf_counter() - start_all
