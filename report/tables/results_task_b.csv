@@ -1,0 +1,21 @@
+model,eval,Precision,Recall,F1,ROC-AUC
+Tree gini (ours),test,0.921,0.930,0.926,0.971
+Tree gini (ours),CV,0.906 ± 0.003,0.908 ± 0.012,0.907 ± 0.006,0.951 ± 0.005
+Tree gini (sklearn),test,0.921,0.930,0.926,0.971
+Tree gini (sklearn),CV,0.906 ± 0.004,0.908 ± 0.013,0.907 ± 0.006,0.953 ± 0.004
+Tree entropy (ours),test,0.912,0.928,0.920,0.975
+Tree entropy (ours),CV,0.906 ± 0.009,0.909 ± 0.006,0.907 ± 0.004,0.962 ± 0.004
+Tree entropy (sklearn),test,0.912,0.928,0.920,0.975
+Tree entropy (sklearn),CV,0.908 ± 0.011,0.910 ± 0.007,0.909 ± 0.004,0.963 ± 0.003
+Pegasos linear (ours),test,0.899,0.909,0.904,0.962
+Pegasos linear (ours),CV,0.893 ± 0.006,0.901 ± 0.011,0.897 ± 0.003,0.956 ± 0.003
+SGD hinge linear (sklearn),test,0.900,0.910,0.905,0.962
+SGD hinge linear (sklearn),CV,0.887 ± 0.010,0.902 ± 0.007,0.894 ± 0.004,0.955 ± 0.005
+"SVC linear (sklearn, max 10k rows)",test,0.895,0.914,0.904,0.960
+"SVC linear (sklearn, max 10k rows)",CV,0.898 ± 0.007,0.907 ± 0.009,0.903 ± 0.002,0.959 ± 0.002
+Pegasos RFF (ours),test,0.874,0.928,0.900,0.963
+Pegasos RFF (ours),CV,0.945 ± 0.064,0.664 ± 0.183,0.763 ± 0.095,0.957 ± 0.002
+SGD hinge RFF (sklearn),test,0.930,0.848,0.887,0.964
+SGD hinge RFF (sklearn),CV,0.947 ± 0.022,0.742 ± 0.091,0.829 ± 0.047,0.957 ± 0.002
+"SVC RBF (sklearn, max 10k rows)",test,0.897,0.916,0.907,0.965
+"SVC RBF (sklearn, max 10k rows)",CV,0.900 ± 0.007,0.907 ± 0.009,0.903 ± 0.001,0.963 ± 0.003

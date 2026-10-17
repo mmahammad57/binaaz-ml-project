@@ -1,7 +1,7 @@
 """
 data_prep.py — loading, cleaning, splitting, and the price-tier label.
 
-Fill in the TODOs. Keep ALL data wrangling here so the rest of the code just
+Keep ALL data wrangling here so the rest of the code just
 calls these functions. Fix your random seed everywhere (see SEED).
 """
 
@@ -16,7 +16,6 @@ SEED = 42
 DATA_PATH = "data/bina_az_sale.csv"   # change if your filename differs
 
 # Columns that LEAK the target (derived from price). Drop these before training.
-# TODO: list the actual leakage columns you find (e.g. a unit/per-m2 price).
 LEAKAGE_COLUMNS: list[str] = [
     "unit_price",
     "total_price",
@@ -166,6 +165,12 @@ def make_features(df):
     # Separate target variable
     y = df['price'].values.astype(np.float64)
     df_features = df.drop(columns=['price'])
+
+    # Presence flags: each column holds a single value or NaN, so get_dummies
+    # (drop_first=True) would drop it entirely. Encode 1 = present, 0 = NaN.
+    for col in ['repair', 'mortgage', 'bill_of_sale', 'vip', 'featured']:
+        if col in df_features.columns:
+            df_features[col] = df_features[col].notna().astype(int)
 
     # Categorical One-Hot Encoding (automatically finds and encodes all string/object columns)
     df_encoded = pd.get_dummies(df_features, drop_first=True)

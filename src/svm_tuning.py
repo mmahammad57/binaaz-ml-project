@@ -18,7 +18,7 @@ and its handoff asks to "adjust the search using validation evidence" and
     RFF gamma in {0.1, 1, 10} x 'scale', where scale = 1 / n_features (the RBF
     width sklearn uses for standardized inputs), with n_components = 500.
 The docs' lambdas are a subset; its absolute gammas of 1 and 10 would be
-~166x and ~1660x 'scale' for our 166 standardized features.
+~171x and ~1710x 'scale' for our 171 standardized features.
 
 Selection, per kernel: among configs within F1_TOLERANCE (0.005) validation
 F1 of that kernel's best, take the one with the LARGEST lambda (see
@@ -34,14 +34,14 @@ Outputs
     report/figures/svm_linear_validation.{png,pdf}     F1 and ROC-AUC vs lambda
     report/figures/svm_linear_margin.{png,pdf}         margin width vs lambda
     report/figures/svm_<kernel>_final_convergence.{png,pdf}   final model only
+    report/figures/svm_validation_f1.{png,pdf}         F1 vs lambda, linear and RFF per gamma
+    results/svm_tuning/stability_check.csv             CV F1 of the max-F1 and chosen configs
     results/svm_final_config.json                      (read by src/benchmark.py)
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
 import shutil
 import tempfile
@@ -51,11 +51,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from . import data_prep
 from . import evaluate as ev
+from .benchmark import _StandardizedPegasos, _stratified_sample, _tiers
 from .data_prep import SEED
+from .splits import get_splits
 from .svm import PegasosSVM
 from .svm_experiment import save_sweep_results, sweep_svm
 from .svm_plots import plot_sweep_results
@@ -69,9 +71,13 @@ F1_TOLERANCE = 0.005                        # "near-best" band for _select_stabl
 KERNEL_LABEL = {"linear": "linear", "rff": "RFF"}
 SELECTION_RULE = (
     f"per kernel: among configs within {F1_TOLERANCE} validation F1 of the best, the largest "
-    "lambda (Pegasos needs T >> 1/lambda updates; lambda=1e-6 did not converge on 16k-row "
-    "CV folds); final = chosen config with the higher validation F1, tie -> linear"
+    "lambda (Pegasos needs T >> 1/lambda updates; see svm_tuning/stability_check.csv); "
+    "final = chosen config with the higher validation F1, tie -> linear"
 )
+# Stability check: the benchmark's cross-validation design (same sample, folds
+# and per-fold thresholds/scaling), applied to the max-F1 and chosen configs.
+STABILITY_ROWS, STABILITY_FOLDS = 20_000, 5
+QUICK_STABILITY_ROWS, QUICK_STABILITY_FOLDS = 5_000, 3
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,12 +129,12 @@ def _select_stable(sweep, tolerance=F1_TOLERANCE):
     the one with the largest lambda (ties in lambda: higher F1).
 
     Why: Pegasos' step size is 1/(lambda * t) and its guarantee is
-    O(1/(lambda * T)) after T updates, so it needs T >> 1/lambda. With
-    lambda = 1e-6, 1/lambda = 1e6 updates, but a 16k-row CV fold gives only
-    16,000 x 20 epochs = 320k: the RFF model picked by raw F1 (lambda = 1e-6)
-    scored 0.908 F1 on validation yet 0.850 +/- 0.035 across CV folds. When F1
-    is near-tied, the larger lambda converges in far fewer updates and is the
-    more regularized model, so the choice is stable across training sizes.
+    O(1/(lambda * T)) after T updates, so it needs T >> 1/lambda. A small
+    lambda can win on the full training split yet be under-trained on
+    smaller training sets (e.g. 1/lambda = 1e6 updates for lambda = 1e-6,
+    against 16,000 rows x 20 epochs = 320k updates in a CV fold). When F1 is
+    near-tied, the larger lambda converges in far fewer updates and is the
+    more regularized model. stability_check() measures both configs in CV.
 
     The sweep's own "selected" fields are pointed at the chosen row, so the
     saved sweep.json and svm_plots' star refer to it; the raw F1 arg-max is
@@ -172,17 +178,20 @@ def _table(sweeps, scale):
 
 # --- Figures for the linear sweep and the final model ------------------------
 # Static report figures following the same conventions as benchmark.py's
-# scaling plot: dataviz reference palette slots in fixed order, 2px lines,
-# visible markers, recessive grid, text in ink colours, white background.
+# scaling plot: dataviz reference palette slots in fixed order, visible
+# markers, recessive grid, text in ink colours, white background. Each is
+# drawn at its printed size (one report column, 3.5 in wide) with 8.5-9 pt
+# fonts; titles and data notes go in the report captions.
 _INK, _MUTED, _GRID = "#1f1f1f", "#5f5f5f", "#e3e3e3"
-_SLOTS = ("#2a78d6", "#eb6834")
+_SLOTS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100")
+_WIDTH, _FONT, _SMALL = 3.5, 9, 8.5
 
 
-def _figure(size=(7.0, 4.4)):
+def _figure(height=2.6):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    fig = Figure(figsize=size)
+    fig = Figure(figsize=(_WIDTH, height), layout="constrained")
     FigureCanvasAgg(fig)
     ax = fig.subplots()
     ax.grid(True, which="major", color=_GRID, linewidth=0.6)
@@ -190,31 +199,39 @@ def _figure(size=(7.0, 4.4)):
     ax.spines[["top", "right"]].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(_MUTED)
-    ax.tick_params(colors=_MUTED, labelsize=9)
+    ax.tick_params(colors=_MUTED, labelsize=_SMALL)
     return fig, ax
 
 
-def _finish(fig, ax, title, note, stem):
-    ax.set_title(title, fontsize=11, color=_INK, loc="left")
-    ax.xaxis.label.set_color(_INK)
-    ax.yaxis.label.set_color(_INK)
-    fig.text(0.01, 0.01, note, fontsize=8.5, color=_MUTED)
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
+def _finish(fig, ax, stem, xlabel, ylabel):
+    ax.set_xlabel(xlabel, color=_INK, fontsize=_FONT)
+    ax.set_ylabel(ylabel, color=_INK, fontsize=_FONT)
     paths = {}
     for ext in ("png", "pdf"):
         paths[ext] = stem.with_suffix(f".{ext}")
-        fig.savefig(paths[ext], dpi=200, facecolor="white", bbox_inches="tight")
+        fig.savefig(paths[ext], dpi=300, facecolor="white")
     return paths
+
+
+def _lambda_axis(ax):
+    """Log lambda axis labelled 1e-7 ... 1e-1: a mathtext 10^k exponent would print below 8 pt."""
+    from matplotlib.ticker import FuncFormatter
+    ax.set_xscale("log")
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"1e{round(np.log10(v))}"))
+
+
+def _legend(ax, loc, **kwargs):
+    ax.legend(loc=loc, frameon=False, fontsize=_SMALL, labelcolor=_INK, handlelength=1.5, **kwargs)
 
 
 def _marker_label(kernel, final_kernel):
     """The star is 'final model' only when this kernel's best config won overall."""
     if kernel == final_kernel:
         return "Selected = final model"
-    return f"Chosen {KERNEL_LABEL[kernel]} config (final model is {KERNEL_LABEL[final_kernel]})"
+    return f"Chosen {KERNEL_LABEL[kernel]} config"
 
 
-def plot_linear_sweep(sweep, final_kernel, out_dir, data_label):
+def plot_linear_sweep(sweep, final_kernel, out_dir):
     rows = sorted(sweep["results"], key=lambda r: r["lambda_"])
     lam = np.array([r["lambda_"] for r in rows])
     best = _best_row(sweep)
@@ -223,57 +240,72 @@ def plot_linear_sweep(sweep, final_kernel, out_dir, data_label):
 
     # Validation F1 and ROC-AUC share one axis: both are fractions in [0, 1].
     fig, ax = _figure()
-    series = (("Validation F1 (selection metric)", "validation_score", "o"),
-              ("Validation ROC-AUC", "roc_auc", "s"))
+    series = (("Validation F1", "validation_score", "o"), ("Validation ROC-AUC", "roc_auc", "s"))
     for (label, key, marker), color in zip(series, _SLOTS):
-        values = [r[key] for r in rows]
-        ax.plot(lam, values, color=color, linewidth=2, marker=marker, markersize=7, label=label)
-        ax.annotate(label.split(" (")[0], xy=(lam[-1], values[-1]), xytext=(8, 0),
-                    textcoords="offset points", va="center", fontsize=9, color=_INK)
-    ax.scatter([best["lambda_"]], [best["validation_score"]], marker="*", s=260,
-               facecolors="none", edgecolors=_INK, linewidths=1.4, zorder=5, label=star)
-    # Headroom above the curves holds the legend, so it never covers a line.
-    lowest = min(min(r["validation_score"], r["roc_auc"]) for r in rows)
-    highest = max(max(r["validation_score"], r["roc_auc"]) for r in rows)
-    span = highest - lowest
-    ax.set(xscale="log", xlim=(lam[0] / 2, lam[-1] * 8),
-           ylim=(lowest - 0.05 * span, highest + 0.45 * span),
-           xlabel="Regularization λ (log scale)", ylabel="Validation score")
-    ax.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=_INK, ncol=2)
-    paths["svm_linear_validation"] = _finish(
-        fig, ax, "Linear Pegasos: validation F1 and ROC-AUC vs λ", data_label,
-        out_dir / "svm_linear_validation")
+        ax.plot(lam, [r[key] for r in rows], color=color, linewidth=1.5, marker=marker, markersize=4,
+                label=label)
+    ax.scatter([best["lambda_"]], [best["validation_score"]], marker="*", s=120,
+               facecolors="none", edgecolors=_INK, linewidths=1, zorder=5, label=star)
+    _lambda_axis(ax)
+    _legend(ax, "lower center")
+    paths["svm_linear_validation"] = _finish(fig, ax, out_dir / "svm_linear_validation",
+                                             "Regularization λ", "Validation score")
 
     # Margin width 2/||w|| in the standardized feature space.
     fig, ax = _figure()
-    widths = [r["margin_width"] for r in rows]
-    ax.plot(lam, widths, color=_SLOTS[0], linewidth=2, marker="o", markersize=7)
-    ax.scatter([best["lambda_"]], [best["margin_width"]], marker="*", s=260,
-               facecolors="none", edgecolors=_INK, linewidths=1.4, zorder=5, label=star)
-    ax.set(xscale="log", yscale="log", xlabel="Regularization λ (log scale)",
-           ylabel="Margin width 2 / ||w|| (log scale)")
-    ax.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=_INK)
-    paths["svm_linear_margin"] = _finish(
-        fig, ax, "Linear Pegasos: margin width vs λ (standardized feature units)", data_label,
-        out_dir / "svm_linear_margin")
+    ax.plot(lam, [r["margin_width"] for r in rows], color=_SLOTS[0], linewidth=1.5, marker="o", markersize=4)
+    ax.scatter([best["lambda_"]], [best["margin_width"]], marker="*", s=120,
+               facecolors="none", edgecolors=_INK, linewidths=1, zorder=5, label=star)
+    from matplotlib.ticker import FuncFormatter
+    _lambda_axis(ax)
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    _legend(ax, "upper left")
+    paths["svm_linear_margin"] = _finish(fig, ax, out_dir / "svm_linear_margin",
+                                         "Regularization λ", "Margin width 2 / ||w||")
     return paths
 
 
-def plot_final_convergence(row, kernel, out_dir, data_label):
+def plot_validation_f1(table, chosen, final_kernel, out_dir):
+    """
+    Validation F1 vs lambda for every swept configuration: the linear kernel
+    and RFF at each gamma, from the sweep table. Stars mark the configuration
+    chosen per kernel (solid star: the final model).
+    """
+    fig, ax = _figure(3.3)
+    groups = [("Linear", table[table.kernel == "linear"])]
+    groups += [(f"RFF, γ = {m:g}·scale", table[(table.kernel == "rff") & (table.gamma_x_scale == m)])
+               for m in GAMMA_MULTIPLIERS]
+    for (label, rows), color, marker in zip(groups, _SLOTS, "os^D"):
+        rows = rows.sort_values("lambda_")
+        ax.plot(rows["lambda_"], rows["val_F1"], color=color, linewidth=1.5, marker=marker, markersize=4,
+                linestyle="-" if label == "Linear" else "--", label=label)
+    for kernel, row in chosen.items():
+        final = kernel == final_kernel
+        ax.scatter([row["lambda_"]], [row["validation_score"]], marker="*", s=130, zorder=5,
+                   facecolors=_INK if final else "none", edgecolors=_INK, linewidths=1,
+                   label="Final model" if final else f"Chosen {KERNEL_LABEL[kernel]}")
+    _lambda_axis(ax)
+    # Below the axes: inside, it would cover sweep points wherever they fall.
+    fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=_SMALL, labelcolor=_INK,
+               handlelength=1.5, columnspacing=1.0)
+    return {"svm_validation_f1": _finish(fig, ax, out_dir / "svm_validation_f1",
+                                         "Regularization λ", "Validation F1")}
+
+
+def plot_final_convergence(row, kernel, out_dir):
     history = row["history"]
     steps = [h["step"] for h in history]
     fig, ax = _figure()
-    ax.plot(steps, [h["objective"] for h in history], color=_SLOTS[0], linewidth=2,
-            marker="o", markersize=5, label="Regularized objective  λ/2·||w||² + mean hinge")
-    ax.plot(steps, [h["hinge_loss"] for h in history], color=_SLOTS[1], linewidth=2,
+    ax.plot(steps, [h["objective"] for h in history], color=_SLOTS[0], linewidth=1.5,
+            marker="o", markersize=4, label="Objective λ/2·||w||² + mean hinge")
+    ax.plot(steps, [h["hinge_loss"] for h in history], color=_SLOTS[1], linewidth=1.5,
             linestyle="--", label="Mean hinge loss")
-    ax.set(xlabel="Training updates (one checkpoint per epoch)", ylabel="Loss on training rows",
-           ylim=(0, None))
-    ax.legend(loc="upper right", frameon=False, fontsize=8.5, labelcolor=_INK)
-    gamma = "" if row["gamma"] is None else f", γ={row['gamma']:.3g}"
+    ax.set_ylim(0, None)
+    _legend(ax, "upper right")
     return {f"svm_{kernel}_final_convergence": _finish(
-        fig, ax, f"Final model, {KERNEL_LABEL[kernel]} Pegasos (λ={row['lambda_']:g}{gamma}): "
-                 "convergence", data_label, out_dir / f"svm_{kernel}_final_convergence")}
+        fig, ax, out_dir / f"svm_{kernel}_final_convergence",
+        "Training updates (one checkpoint per epoch)", "Loss on training rows")}
 
 
 def _plot_rff_with_kernel_names(sweep, out_dir, data_label):
@@ -296,6 +328,48 @@ def _plot_rff_with_kernel_names(sweep, out_dir, data_label):
     return paths
 
 
+# --- Stability check -----------------------------------------------------------
+def stability_check(X_pool, price_pool, names, sweeps, scale, n_max, n_folds):
+    """
+    k-fold CV F1 (mean ± std) of each kernel's highest-validation-F1 config
+    and of its chosen config, using the benchmark's CV design: a stratified
+    n_max-row sample of train + validation, StratifiedKFold(seed), and in
+    every fold a tier threshold and scaler from the fold's training rows only
+    (benchmark._tiers, benchmark._StandardizedPegasos). The test split is
+    not part of X_pool.
+    """
+    _, strata = _tiers(price_pool)
+    subset = _stratified_sample(strata, n_max)
+    X, price, strata = X_pool[subset], price_pool[subset], strata[subset]
+    folds = list(StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=SEED).split(X, strata))
+    rows, cache = [], {}
+    for kernel, sweep in sweeps.items():
+        for role, params in (("max validation F1", sweep["best_f1_params"]), ("chosen", sweep["best_params"])):
+            gamma = params.get("gamma") if kernel == "rff" else None
+            key = (kernel, params["lambda_"], gamma)
+            if key not in cache:                    # max-F1 and chosen configs may coincide
+                f1 = []
+                for fit, held in folds:
+                    _, y_fit, y_held = _tiers(price[fit], price[held])
+                    model = _StandardizedPegasos(names, kernel=kernel, lambda_=params["lambda_"],
+                                                 gamma=gamma if gamma is not None else scale,
+                                                 n_components=N_COMPONENTS, n_epochs=N_EPOCHS)
+                    model.fit(X[fit], y_fit)
+                    f1.append(ev.precision_recall_f1(y_held, model.predict(X[held]))[2])
+                cache[key] = (float(np.mean(f1)), float(np.std(f1, ddof=1)))
+            row = next(r for r in sweep["results"] if r["lambda_"] == params["lambda_"]
+                       and (gamma is None or r["gamma"] == gamma))
+            rows.append({
+                "kernel": kernel, "config": role, "lambda_": params["lambda_"],
+                "gamma_x_scale": None if gamma is None else round(gamma / scale, 6),
+                "val_F1": row["validation_score"], "cv_F1_mean": cache[key][0], "cv_F1_std": cache[key][1],
+                "f1_tolerance": F1_TOLERANCE, "n_epochs": N_EPOCHS,
+                "cv_rows": len(subset), "cv_folds": n_folds, "fit_rows_per_fold": len(folds[0][0]),
+                "updates_per_fit": len(folds[0][0]) * N_EPOCHS, "one_over_lambda": 1.0 / params["lambda_"],
+            })
+    return pd.DataFrame(rows)
+
+
 # --- Entry point --------------------------------------------------------------
 def run_tuning(quick: bool = False) -> dict:
     start_all = time.perf_counter()
@@ -308,10 +382,12 @@ def run_tuning(quick: bool = False) -> dict:
     start = time.perf_counter()
     df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
     X, price, names = data_prep.make_features(df)
-    X_tr, price_tr, X_val, price_val, _, _ = data_prep.train_val_test_split(X, price)
-    with contextlib.redirect_stdout(io.StringIO()):
-        y_tr, threshold = data_prep.make_tier_label(price_tr)
-        y_val, _ = data_prep.make_tier_label(price_val, threshold)
+    split = get_splits(X, price)            # the shared stratified split (src/splits.py)
+    X_tr, X_val = X[split.train], X[split.val]
+    y_tr, y_val, threshold = split.y_train, split.y_val, split.threshold
+    # Unscaled train + validation rows, in the benchmark's order, for the CV stability check.
+    X_pool = np.vstack([X_tr, X_val])
+    price_pool = np.concatenate([price[split.train], price[split.val]])
     if quick:
         keep, _ = train_test_split(np.arange(len(y_tr)), train_size=QUICK_TRAIN_ROWS,
                                    stratify=y_tr, random_state=SEED)
@@ -368,8 +444,8 @@ def run_tuning(quick: bool = False) -> dict:
             f"validation={len(y_val):,}")
     rff_note = " | star = chosen RFF config" + ("" if final == "rff" else "; final model is linear")
     figure_paths = _plot_rff_with_kernel_names(sweeps["rff"], figures_dir, base + rff_note)
-    figure_paths.update(plot_linear_sweep(sweeps["linear"], final, figures_dir, base))
-    figure_paths.update(plot_final_convergence(best[final], final, figures_dir, base))
+    figure_paths.update(plot_linear_sweep(sweeps["linear"], final, figures_dir))
+    figure_paths.update(plot_final_convergence(best[final], final, figures_dir))
 
     configs = {
         "linear": {"kernel": "linear", "lambda_": best["linear"]["lambda_"],
@@ -395,7 +471,8 @@ def run_tuning(quick: bool = False) -> dict:
         },
         "search_space": {"lambdas": list(LAMBDAS), "kernels": ["linear", "rff"],
                          "gamma_multipliers_of_scale": list(GAMMA_MULTIPLIERS),
-                         "gamma_scale": scale, "n_components": N_COMPONENTS, "n_epochs": N_EPOCHS},
+                         "gamma_scale": scale, "n_components": N_COMPONENTS, "n_epochs": N_EPOCHS,
+                         "f1_tolerance": F1_TOLERANCE},
         "data": {"n_train": int(len(y_tr)), "n_validation": int(len(y_val)),
                  "quick_subsample": quick, "tier_threshold_train_median": threshold,
                  "n_features": int(X_tr.shape[1]), "seed": SEED, "test_used": False},
@@ -408,6 +485,16 @@ def run_tuning(quick: bool = False) -> dict:
 
     table = _table(sweeps, scale)
     table.to_csv(results_dir / "svm_tuning" / "sweep_table.csv", index=False)
+    figure_paths.update(plot_validation_f1(table, best, final, figures_dir))
+
+    start = time.perf_counter()
+    n_max, n_folds = (QUICK_STABILITY_ROWS, QUICK_STABILITY_FOLDS) if quick else (STABILITY_ROWS, STABILITY_FOLDS)
+    stability = stability_check(X_pool, price_pool, names, sweeps, scale, n_max, n_folds)
+    stability.to_csv(results_dir / "svm_tuning" / "stability_check.csv", index=False)
+    timings["stability check"] = time.perf_counter() - start
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        print(f"\nStability check ({n_folds}-fold CV on {n_max:,} train+val rows):\n"
+              + stability.to_string(index=False, float_format=lambda v: f"{v:.4g}"))
     def rows_matching(kernel, params):
         hit = (table.kernel == kernel) & (table.lambda_ == params["lambda_"])
         if kernel == "rff":

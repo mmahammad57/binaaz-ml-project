@@ -1,0 +1,20 @@
+\begin{tabular}{lrrrrrrr}
+\toprule
+ & \multicolumn{4}{c}{Task A: log price} & \multicolumn{3}{c}{Task B: premium tier} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-8}
+Model & RMSE (log) & $R^2$ (log) & $R^2$ (log), CV & $R^2$ (AZN) & F1 & F1, CV & ROC-AUC \\
+\midrule
+Tree (ours) & 0.241 & 0.853 & 0.831 $\pm$ 0.006 & 0.753 & n/a & n/a & n/a \\
+Tree (sklearn) & 0.242 & 0.852 & 0.831 $\pm$ 0.005 & 0.739 & n/a & n/a & n/a \\
+Tree gini (ours) & n/a & n/a & n/a & n/a & 0.926 & 0.907 $\pm$ 0.006 & 0.971 \\
+Tree gini (sklearn) & n/a & n/a & n/a & n/a & 0.926 & 0.907 $\pm$ 0.006 & 0.971 \\
+Tree entropy (ours) & n/a & n/a & n/a & n/a & 0.920 & 0.907 $\pm$ 0.004 & 0.975 \\
+Tree entropy (sklearn) & n/a & n/a & n/a & n/a & 0.920 & 0.909 $\pm$ 0.004 & 0.975 \\
+Pegasos linear (ours) & n/a & n/a & n/a & n/a & 0.904 & 0.897 $\pm$ 0.003 & 0.962 \\
+SGD hinge linear (sklearn) & n/a & n/a & n/a & n/a & 0.905 & 0.894 $\pm$ 0.004 & 0.962 \\
+SVC linear (sklearn)$^{*}$ & n/a & n/a & n/a & n/a & 0.904 & 0.903 $\pm$ 0.002 & 0.960 \\
+Pegasos RFF (ours) & n/a & n/a & n/a & n/a & 0.900 & 0.763 $\pm$ 0.095 & 0.963 \\
+SGD hinge RFF (sklearn) & n/a & n/a & n/a & n/a & 0.887 & 0.829 $\pm$ 0.047 & 0.964 \\
+SVC RBF (sklearn)$^{*}$ & n/a & n/a & n/a & n/a & 0.907 & 0.903 $\pm$ 0.001 & 0.965 \\
+\bottomrule
+\end{tabular}

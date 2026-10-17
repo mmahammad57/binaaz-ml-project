@@ -6,7 +6,7 @@ Run from the repo root:
     python -m src.benchmark --quick    # smoke test: 5k-row CV, 3 folds, 5k-row test fits
 
 Stages
-  1. data         load -> clean -> make_features -> 6-array train/val/test split
+  1. data         load -> clean -> make_features -> splits.get_splits (stratified)
   2. CV           stratified 20k-row subsample of train+val, 5-fold StratifiedKFold;
                   tier threshold and standardization refit inside every fold
   3. test         every model fit once on the training split, scored once on test
@@ -45,6 +45,7 @@ from . import data_prep
 from . import evaluate as ev
 from .data_prep import SEED
 from .decision_tree import DecisionTree
+from .splits import get_splits
 from .svm import PegasosSVM
 
 # --- Final configurations ---------------------------------------------------
@@ -53,41 +54,42 @@ from .svm import PegasosSVM
 #       {"configs": {"linear": {"kernel", "lambda_", "gamma", "n_components", "n_epochs"},
 #                    "rff": {...same keys...}},
 #        "final": "linear" | "rff", ...}
-#   results/tree_final_config.json  written by B's tree sweep
+#   results/tree_final_config.json  optional, from a tree sweep (none is run
+#       by run_all at present)
 #       {"config": {"tree_task_a": {"max_depth", "min_samples_split", "min_samples_leaf"},
 #                   "tree_task_b": {...same keys...}}, ...}
-# Any section without a file falls back to FALLBACK_CONFIGS below. Those were
-# placeholders when written (2026-10-17): docs/SVM.md said "final SVM settings
-# have not been established yet", and B's src/tree_experiment.py only ran on
-# synthetic data. Values are placeholders unless a source is cited.
+# Any section without a file uses FALLBACK_CONFIGS below. For the trees this
+# is the configuration actually used: fixed before any experiment (depth 10
+# with small minimum node sizes, under the depth cap below) and not tuned.
+# The SVM entries are only used if src/svm_tuning.py has not been run.
 FALLBACK_CONFIGS = {
     # Task A: regression on log(price).
     "tree_task_a": {
-        "max_depth": 10,            # TODO: confirm with B
-        "min_samples_split": 10,    # TODO: confirm with B
-        "min_samples_leaf": 5,      # TODO: confirm with B
+        "max_depth": 10,
+        "min_samples_split": 10,
+        "min_samples_leaf": 5,
     },
     # Task B: price tier. Both gini and entropy are benchmarked with these.
     "tree_task_b": {
-        "max_depth": 10,            # TODO: confirm with B
-        "min_samples_split": 10,    # TODO: confirm with B
-        "min_samples_leaf": 5,      # TODO: confirm with B
+        "max_depth": 10,
+        "min_samples_split": 10,
+        "min_samples_leaf": 5,
     },
     # Both of our SVMs are benchmarked, each against baselines of its own kind.
     # n_components=500 and n_epochs=20 are the docs/SVM.md default / examples.
     # "scale" gamma = 1 / n_features: sklearn's default RBF width for
     # standardized features (uses nothing but the column count).
     "svm": {
-        "linear": {"kernel": "linear", "lambda_": 1e-3,   # TODO: confirm with C
+        "linear": {"kernel": "linear", "lambda_": 1e-3,
                    "gamma": "scale", "n_components": 500, "n_epochs": 20},
-        "rff": {"kernel": "rff", "lambda_": 1e-3,         # TODO: confirm with C
+        "rff": {"kernel": "rff", "lambda_": 1e-3,
                 "gamma": "scale", "n_components": 500, "n_epochs": 20},
         # Model whose kernel the scaling stage times. docs/SVM.md: "The final
         # nonlinear model uses random Fourier features (RFF) with linear Pegasos".
         "final": "rff",
     },
 }
-MAX_TREE_DEPTH = 12        # hard cap on max_depth (our tree is O(n^1.6) per level)
+MAX_TREE_DEPTH = 12        # hard cap on max_depth (our tree fits slowly; see the scaling stage)
 SVC_MAX_ROWS = 10_000      # exact-kernel SVC is fit on at most this many rows
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,7 +116,7 @@ def load_final_configs(quick=False):
     Called at the start of each run so a file written earlier in the same
     process (e.g. by run_all) is picked up.
     """
-    fallback = "fallback (benchmark.py placeholders)"
+    fallback = "fixed (benchmark.py FALLBACK_CONFIGS)"
     FINAL_CONFIGS.clear()
     FINAL_CONFIGS.update(copy.deepcopy(FALLBACK_CONFIGS))
     CONFIG_SOURCES.clear()
@@ -569,58 +571,59 @@ def scaling(X_tr, price_tr, names, sizes):
 def _plot_scaling(table, slopes, stem):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
-    from matplotlib.ticker import FixedLocator, NullLocator
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
     # Categorical slots 1-4 of the dataviz reference palette, in fixed order
     # (column order: our tree, sklearn tree, our SVM, sklearn SGD).
-    # Ours = solid, sklearn = dashed, plus distinct markers and direct labels,
-    # so identity never rests on colour alone.
-    looks = (("#2a78d6", "-", "o"), ("#eb6834", "--", "s"),
-             ("#1baf7a", "-", "^"), ("#eda100", "--", "D"))
+    # Ours = solid, sklearn = dashed, plus distinct markers, so identity never
+    # rests on colour alone. Short legend names fit the one-column width.
+    looks = (("#2a78d6", "-", "o", "Our tree"), ("#eb6834", "--", "s", "sklearn tree"),
+             ("#1baf7a", "-", "^", "Pegasos"), ("#eda100", "--", "D", "SGD"))
     style = dict(zip(table.columns, looks, strict=True))
     ink, muted, grid = "#1f1f1f", "#5f5f5f", "#e3e3e3"
     sizes = table.index.to_numpy()
 
-    fig = Figure(figsize=(7.5, 4.6))
+    # Drawn at its printed size (one report column, 3.5 in) with 8.5-9 pt
+    # fonts; constrained layout keeps everything inside the 3.5 x 2.8 in.
+    fig = Figure(figsize=(3.5, 2.8), layout="constrained")
     FigureCanvasAgg(fig)
     ax = fig.subplots()
-    for name, (color, dash, marker) in style.items():
-        ax.plot(sizes, table[name], color=color, linestyle=dash, linewidth=2,
-                marker=marker, markersize=7, label=f"{name}  (slope {slopes[name]:.2f})")
-
-    # Direct labels at the right end, nudged apart in log space so they never overlap.
-    ends = sorted((np.log10(table[name].iloc[-1]), name) for name in style)
-    placed = []
-    for y, name in ends:
-        if placed and y - placed[-1][0] < 0.13:
-            y = placed[-1][0] + 0.13
-        placed.append((y, name))
-    for y, name in placed:
-        ax.annotate(name, xy=(sizes[-1], table[name].iloc[-1]), xytext=(sizes[-1] * 1.12, 10 ** y),
-                    va="center", fontsize=9, color=ink)
-
-    ax.set(xscale="log", yscale="log", xlim=(sizes[0] / 1.25, sizes[-1] * 3.2),
-           xlabel="Training rows (log scale)", ylabel="Fit time, seconds (log scale)")
+    for name, (color, dash, marker, short) in style.items():
+        ax.plot(sizes, table[name], color=color, linestyle=dash, linewidth=1.5,
+                marker=marker, markersize=4, label=f"{short}, slope {slopes[name]:.2f}")
+    ax.set(xscale="log", yscale="log", xlim=(sizes[0] / 1.25, sizes[-1] * 1.25))
+    ax.set_xlabel("Training rows (log scale)", color=ink, fontsize=9)
+    ax.set_ylabel("Fit time, s (log scale)", color=ink, fontsize=9)
     ax.xaxis.set_major_locator(FixedLocator(sizes))
     ax.xaxis.set_minor_locator(NullLocator())
     ax.set_xticklabels([f"{n // 1000}k" for n in sizes])
+    # Plain numbers (0.01, 0.1, 1, 10) instead of 10^k: the exponent of a
+    # mathtext label would print below 8 pt.
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.grid(True, which="major", color=grid, linewidth=0.6)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(muted)
-    ax.tick_params(colors=muted, labelsize=9)
-    ax.xaxis.label.set_color(ink)
-    ax.yaxis.label.set_color(ink)
-    ax.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=ink)
-    ax.set_title("Fit time vs training size (Task B, one fit per point)", fontsize=11,
-                 color=ink, loc="left")
-    fig.tight_layout()
+    ax.tick_params(colors=muted, labelsize=8.5)
+    fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8.5, labelcolor=ink,
+               handlelength=1.4, columnspacing=0.8)
     paths = []
     for ext in ("png", "pdf"):
         path = stem.with_suffix(f".{ext}")
-        fig.savefig(path, dpi=200, facecolor="white", bbox_inches="tight")
+        fig.savefig(path, dpi=300, facecolor="white")
         paths.append(path)
+    return paths
+
+
+def replot_scaling(quick: bool = False):
+    """Redraw the scaling figure from the saved CSV and slopes, without refitting."""
+    results_dir = ROOT / ("results/quick" if quick else "results")
+    figures_dir = results_dir if quick else ROOT / "report/figures"
+    table = pd.read_csv(results_dir / "benchmark_scaling.csv", index_col="n_train")
+    slopes = json.loads((results_dir / "benchmark_meta.json").read_text(encoding="utf-8"))["scaling_slopes"]
+    paths = _plot_scaling(table, slopes, figures_dir / "benchmark_scaling")
+    print("Wrote " + ", ".join(str(p.relative_to(ROOT)) for p in paths))
     return paths
 
 
@@ -647,15 +650,11 @@ def run_benchmark(quick: bool = False) -> dict:
         df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
         X, price, names = data_prep.make_features(df)
         _check_finite(X, names, "make_features output")
-        # data_prep's split returns no row indices. Its shuffle depends only on
-        # the row count and seed, so a row-id column appended to X travels with
-        # the rows without changing the split, and is stripped afterwards.
-        row_id = np.arange(len(price), dtype=float)
-        X_tr, price_tr, X_val, price_val, X_te, price_te = data_prep.train_val_test_split(
-            np.column_stack([X, row_id]), price)
-        id_tr, id_te = X_tr[:, -1].astype(int), X_te[:, -1].astype(int)
-        X_tr, X_val, X_te = X_tr[:, :-1], X_val[:, :-1], X_te[:, :-1]
-        assert np.array_equal(price_tr, price[id_tr]) and np.array_equal(price_te, price[id_te])
+        # The shared stratified split (src/splits.py), as row positions.
+        split = get_splits(X, price)
+        id_tr, id_te = split.train, split.test
+        X_tr, X_val, X_te = X[split.train], X[split.val], X[split.test]
+        price_tr, price_val, price_te = price[split.train], price[split.val], price[split.test]
         print(f"X {X.shape}, train/val/test {len(price_tr):,}/{len(price_val):,}/{len(price_te):,}")
     stage_s["data"] = time.perf_counter() - start
 
@@ -756,4 +755,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark our models against scikit-learn.")
     parser.add_argument("--quick", action="store_true",
                         help="smoke test: 5k-row CV with 3 folds and 5k-row test-stage fits")
-    run_benchmark(parser.parse_args().quick)
+    parser.add_argument("--figures-only", action="store_true",
+                        help="only redraw the scaling figure from the saved results")
+    args = parser.parse_args()
+    if args.figures_only:
+        replot_scaling(args.quick)
+    else:
+        run_benchmark(args.quick)
