@@ -101,11 +101,6 @@ def clean(df):
     return df
 
 
-if __name__ == '__main__':
-    raw_df = load_raw()
-    cleaned_df = clean(raw_df)
-
-
 def make_features(df):
     """
     Turn the cleaned frame into a numeric design matrix.
@@ -113,7 +108,20 @@ def make_features(df):
       - assemble X (features) and y (target `price`).
     Return (X, y, feature_names).
     """
-    raise NotImplementedError("TODO: build X, y")
+    df = df.copy()
+
+    # Separate target variable
+    y = df['price'].values.astype(np.float64)
+    df_features = df.drop(columns=['price'])
+
+    # Categorical One-Hot Encoding (automatically finds and encodes all string/object columns)
+    df_encoded = pd.get_dummies(df_features, drop_first=True)
+
+    feature_names = df_encoded.columns.tolist()
+    X = df_encoded.values.astype(np.float64)
+
+    print(f"[Data Prep] Feature matrix constructed. X shape: {X.shape}, y shape: {y.shape}")
+    return X, y, feature_names
 
 
 def make_tier_label(y_price, threshold=None):
@@ -143,3 +151,9 @@ def standardize(X_tr, *others):
     (Needed for the SVM; trees don't require it.)
     """
     raise NotImplementedError("TODO: standardize using train stats")
+
+
+if __name__ == '__main__':
+    raw_df = load_raw()
+    cleaned_df = clean(raw_df)
+    X, y, features = make_features(cleaned_df)
