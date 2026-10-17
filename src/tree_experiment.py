@@ -71,11 +71,6 @@ def run(quick: bool = False):
     y_val_tier = y_val_tier.values if hasattr(y_val_tier, 'values') else y_val_tier
     y_val_log = y_val_log.values if hasattr(y_val_log, 'values') else y_val_log
 
-if __name__ == "__main__":
-    import sys
-    quick_mode = "--quick" in sys.argv
-    run(quick=quick_mode)
-    
     results_table = []
     
     # --- TASK B: Classification (Price Tier) ---
@@ -106,7 +101,6 @@ if __name__ == "__main__":
                 "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
             })
             
-            # Selection rule: best validation F1, if within 0.002 pick simpler (smaller depth)
             if best_b_config is None or val_f1 > best_b_val + 0.002:
                 best_b_val = val_f1
                 best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
@@ -230,3 +224,36 @@ if __name__ == "__main__":
     }
     with open(os.path.join(results_dir, "tree_selection.json"), 'w') as f:
         json.dump(selection_info, f, indent=4)
+        
+    # --- FIGURES (Part 3) ---
+    plt.rcParams.update({'font.size': 8})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.5))
+    
+    ax1.plot(depths, task_a_curves["train"], label='Train RMSE', marker='o')
+    ax1.plot(depths, task_a_curves["val"], label='Val RMSE', marker='s')
+    ax1.set_xlabel("Max Depth")
+    ax1.set_ylabel("RMSE (Log Price)")
+    ax1.set_title("Task A: Depth Curve")
+    ax1.legend()
+    ax1.grid(True)
+    
+    ax2.plot(depths, task_b_curves["gini"]["train"], 'b--', label='Train F1 (Gini)', alpha=0.5)
+    ax2.plot(depths, task_b_curves["gini"]["val"], 'b-', label='Val F1 (Gini)', marker='s')
+    ax2.plot(depths, task_b_curves["entropy"]["train"], 'g--', label='Train F1 (Entropy)', alpha=0.5)
+    ax2.plot(depths, task_b_curves["entropy"]["val"], 'g-', label='Val F1 (Entropy)', marker='^')
+    ax2.set_xlabel("Max Depth")
+    ax2.set_ylabel("F1 Score")
+    ax2.set_title("Task B: Depth Curve")
+    ax2.legend()
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.png"), dpi=300)
+    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.pdf"))
+    plt.close()
+    print(f"Figures saved to {figures_dir}")
+
+if __name__ == "__main__":
+    import sys
+    quick_mode = "--quick" in sys.argv
+    run(quick=quick_mode)
