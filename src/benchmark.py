@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import io
 import json
+import re
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -46,11 +48,19 @@ from .decision_tree import DecisionTree
 from .svm import PegasosSVM
 
 # --- Final configurations ---------------------------------------------------
-# No tuned values exist in the repo yet (checked 2026-10-17): docs/SVM.md says
-# "final SVM settings have not been established yet", and B's
-# src/tree_experiment.py (origin/feature/decision-tree) only runs on synthetic
-# data. Values below are placeholders unless a source is cited.
-FINAL_CONFIGS = {
+# FINAL_CONFIGS is filled by load_final_configs() from the tuning outputs:
+#   results/svm_final_config.json   written by src/svm_tuning.py
+#       {"configs": {"linear": {"kernel", "lambda_", "gamma", "n_components", "n_epochs"},
+#                    "rff": {...same keys...}},
+#        "final": "linear" | "rff", ...}
+#   results/tree_final_config.json  written by B's tree sweep
+#       {"config": {"tree_task_a": {"max_depth", "min_samples_split", "min_samples_leaf"},
+#                   "tree_task_b": {...same keys...}}, ...}
+# Any section without a file falls back to FALLBACK_CONFIGS below. Those were
+# placeholders when written (2026-10-17): docs/SVM.md said "final SVM settings
+# have not been established yet", and B's src/tree_experiment.py only ran on
+# synthetic data. Values are placeholders unless a source is cited.
+FALLBACK_CONFIGS = {
     # Task A: regression on log(price).
     "tree_task_a": {
         "max_depth": 10,            # TODO: confirm with B
@@ -63,24 +73,78 @@ FINAL_CONFIGS = {
         "min_samples_split": 10,    # TODO: confirm with B
         "min_samples_leaf": 5,      # TODO: confirm with B
     },
+    # Both of our SVMs are benchmarked, each against baselines of its own kind.
+    # n_components=500 and n_epochs=20 are the docs/SVM.md default / examples.
+    # "scale" gamma = 1 / n_features: sklearn's default RBF width for
+    # standardized features (uses nothing but the column count).
     "svm": {
-        # docs/SVM.md: "The final nonlinear model uses random Fourier features
-        # (RFF) with linear Pegasos".
-        "kernel": "rff",
-        # docs/SVM.md: PegasosSVM default and the documented sweep setting.
-        "n_components": 500,
-        # docs/SVM.md fit/sweep examples use n_epochs=20.
-        "n_epochs": 20,
-        "lambda_": 1e-3,            # TODO: confirm with C (lowest value of C's sweep grid)
-        # "scale" = 1 / n_features: sklearn's default RBF width for
-        # standardized features, so it uses no data beyond the column count.
-        "gamma": "scale",           # TODO: confirm with C
+        "linear": {"kernel": "linear", "lambda_": 1e-3,   # TODO: confirm with C
+                   "gamma": "scale", "n_components": 500, "n_epochs": 20},
+        "rff": {"kernel": "rff", "lambda_": 1e-3,         # TODO: confirm with C
+                "gamma": "scale", "n_components": 500, "n_epochs": 20},
+        # Model whose kernel the scaling stage times. docs/SVM.md: "The final
+        # nonlinear model uses random Fourier features (RFF) with linear Pegasos".
+        "final": "rff",
     },
 }
 MAX_TREE_DEPTH = 12        # hard cap on max_depth (our tree is O(n^1.6) per level)
 SVC_MAX_ROWS = 10_000      # exact-kernel SVC is fit on at most this many rows
 
 ROOT = Path(__file__).resolve().parents[1]
+CONFIG_FILES = {
+    "svm": ROOT / "results/svm_final_config.json",
+    "tree": ROOT / "results/tree_final_config.json",
+}
+FINAL_CONFIGS = copy.deepcopy(FALLBACK_CONFIGS)
+CONFIG_SOURCES = {}
+
+
+def load_final_configs():
+    """
+    Refresh FINAL_CONFIGS (in place, so every helper sees it) from the tuning
+    files, section by section, keeping FALLBACK_CONFIGS for anything missing.
+    Called at the start of each run so a file written earlier in the same
+    process (e.g. by run_all) is picked up.
+    """
+    fallback = "fallback (benchmark.py placeholders)"
+    FINAL_CONFIGS.clear()
+    FINAL_CONFIGS.update(copy.deepcopy(FALLBACK_CONFIGS))
+    CONFIG_SOURCES.clear()
+
+    def merge(target, loaded, label, path):
+        unknown = set(loaded) - set(target)
+        if unknown:
+            raise ValueError(f"{path.name}: unknown {label} settings {sorted(unknown)}")
+        target.update(loaded)
+        CONFIG_SOURCES[label] = str(path.relative_to(ROOT))
+
+    path = CONFIG_FILES["svm"]
+    svm_file = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if svm_file and "configs" not in svm_file:
+        raise ValueError(f"{path.name} has no 'configs' section (old format?); "
+                         "re-run python -m src.svm_tuning")
+    for kernel in ("linear", "rff"):
+        loaded = svm_file.get("configs", {}).get(kernel)
+        if loaded is None:
+            CONFIG_SOURCES[f"svm_{kernel}"] = fallback
+            continue
+        if loaded.get("kernel", kernel) != kernel:
+            raise ValueError(f"{path.name}: configs.{kernel} has kernel {loaded['kernel']!r}")
+        merge(FINAL_CONFIGS["svm"][kernel], loaded, f"svm_{kernel}", path)
+    if svm_file.get("final") in ("linear", "rff"):
+        FINAL_CONFIGS["svm"]["final"] = svm_file["final"]
+        CONFIG_SOURCES["svm_final"] = str(path.relative_to(ROOT))
+    else:
+        CONFIG_SOURCES["svm_final"] = fallback
+
+    path = CONFIG_FILES["tree"]
+    tree_file = json.loads(path.read_text(encoding="utf-8"))["config"] if path.exists() else {}
+    for key in ("tree_task_a", "tree_task_b"):
+        if key in tree_file:
+            merge(FINAL_CONFIGS[key], tree_file[key], key, path)
+        else:
+            CONFIG_SOURCES[key] = fallback
+    return FINAL_CONFIGS, CONFIG_SOURCES
 
 
 # --- Small helpers ----------------------------------------------------------
@@ -131,15 +195,31 @@ def _tree_params(key):
     return params
 
 
-def _svm_params(n_features):
-    params = dict(FINAL_CONFIGS["svm"])
+def _svm_params(kernel, n_features):
+    params = dict(FINAL_CONFIGS["svm"][kernel])
     if params["gamma"] == "scale":
         params["gamma"] = 1.0 / n_features
     return params
 
 
+def _pegasos_args(svm):
+    return {k: svm[k] for k in ("lambda_", "kernel", "gamma", "n_components", "n_epochs")}
+
+
+def _svm_models(kernel, names):
+    """Our Pegasos for one kernel plus the two sklearn baselines matched to it."""
+    svm = _svm_params(kernel, len(names))
+    label = {"linear": "linear", "rff": "RFF"}[kernel]
+    svc = {"linear": "SVC linear", "rff": "SVC RBF"}[kernel]
+    return {
+        f"Pegasos {label} (ours)": (_StandardizedPegasos(names, **_pegasos_args(svm)), "margin"),
+        f"SGD hinge {label} (sklearn)": (_sgd_pipeline(svm), "margin"),
+        f"{svc} (sklearn, max {SVC_MAX_ROWS // 1000}k rows)": (_SubsampledSVC(svm, SVC_MAX_ROWS), "margin"),
+    }
+
+
 def _slug(name):
-    return "".join(ch if ch.isalnum() else "_" for ch in name.lower()).strip("_")
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
 # --- SVM adapters (common fit / predict / decision_function interface) -----
@@ -196,9 +276,11 @@ def _sgd_pipeline(svm):
 
 class _SubsampledSVC:
     """
-    Exact-kernel sklearn SVC in the same kernel family as ours (RFF
-    approximates exactly this RBF kernel), fit on at most `cap` stratified
-    training rows because kernel SVC scales roughly quadratically in n.
+    Exact sklearn SVC in the same kernel family as the Pegasos it is matched
+    to: kernel="linear" for linear Pegasos, kernel="rbf" for RFF Pegasos (RFF
+    approximates exactly this RBF kernel, with the same gamma). Fit on at most
+    `cap` stratified training rows because kernel SVC scales roughly
+    quadratically in n.
 
     C = 1 / (n * lambda_): SVC minimizes ||w||^2 / 2 + C * sum(hinge); dividing
     by C * n gives ||w||^2 / (2 * C * n) + mean(hinge), which is Pegasos'
@@ -241,8 +323,6 @@ def _task_a_models():
 def _task_b_models(names):
     """name -> (model, score kind). Trees score with P(premium), SVMs with margins."""
     params = _tree_params("tree_task_b")
-    svm = _svm_params(len(names))
-    svm_args = {k: svm[k] for k in ("lambda_", "kernel", "gamma", "n_components", "n_epochs")}
     models = {}
     for criterion in ("gini", "entropy"):
         models[f"Tree {criterion} (ours)"] = (
@@ -250,10 +330,8 @@ def _task_b_models(names):
             "proba")
         models[f"Tree {criterion} (sklearn)"] = (
             DecisionTreeClassifier(criterion=criterion, random_state=SEED, **params), "proba")
-    models["Pegasos SVM (ours)"] = (_StandardizedPegasos(names, **svm_args), "margin")
-    models["SGD hinge (sklearn)"] = (_sgd_pipeline(svm), "margin")
-    models[f"SVC (sklearn, max {SVC_MAX_ROWS // 1000}k rows)"] = (
-        _SubsampledSVC(svm, SVC_MAX_ROWS), "margin")
+    for kernel in ("linear", "rff"):
+        models.update(_svm_models(kernel, names))
     return models
 
 
@@ -430,18 +508,22 @@ def compare_trees(fitted, X_te, names):
 
 # --- Stage 5: scaling ------------------------------------------------------
 def scaling(X_tr, price_tr, names, sizes):
-    """Fit time vs n for both trees (Task B, gini) and both linear-hinge SVMs."""
+    """
+    Fit time vs n for both trees (Task B, gini) and, for the final SVM kernel
+    (validation-F1 winner), our Pegasos and the matched SGD baseline.
+    """
     _, y = _tiers(price_tr)
     params = _tree_params("tree_task_b")
-    svm = _svm_params(len(names))
-    svm_args = {k: svm[k] for k in ("lambda_", "kernel", "gamma", "n_components", "n_epochs")}
+    kernel = FINAL_CONFIGS["svm"]["final"]
+    svm = _svm_params(kernel, len(names))
+    label = {"linear": "linear", "rff": "RFF"}[kernel]
     makers = {
         "Tree gini (ours)": lambda: DecisionTree(task="classification", criterion="gini",
                                                  random_state=SEED, **params),
         "Tree gini (sklearn)": lambda: DecisionTreeClassifier(criterion="gini",
                                                               random_state=SEED, **params),
-        "Pegasos SVM (ours)": lambda: _StandardizedPegasos(names, **svm_args),
-        "SGD hinge (sklearn)": lambda: _sgd_pipeline(svm),
+        f"Pegasos {label} (ours)": lambda: _StandardizedPegasos(names, **_pegasos_args(svm)),
+        f"SGD hinge {label} (sklearn)": lambda: _sgd_pipeline(svm),
     }
     times = defaultdict(list)
     for n in sizes:
@@ -463,15 +545,13 @@ def _plot_scaling(table, slopes, stem):
     from matplotlib.figure import Figure
     from matplotlib.ticker import FixedLocator, NullLocator
 
-    # Categorical slots 1-4 of the dataviz reference palette, in fixed order.
+    # Categorical slots 1-4 of the dataviz reference palette, in fixed order
+    # (column order: our tree, sklearn tree, our SVM, sklearn SGD).
     # Ours = solid, sklearn = dashed, plus distinct markers and direct labels,
     # so identity never rests on colour alone.
-    style = {
-        "Tree gini (ours)": ("#2a78d6", "-", "o"),
-        "Tree gini (sklearn)": ("#eb6834", "--", "s"),
-        "Pegasos SVM (ours)": ("#1baf7a", "-", "^"),
-        "SGD hinge (sklearn)": ("#eda100", "--", "D"),
-    }
+    looks = (("#2a78d6", "-", "o"), ("#eb6834", "--", "s"),
+             ("#1baf7a", "-", "^"), ("#eda100", "--", "D"))
+    style = dict(zip(table.columns, looks, strict=True))
     ink, muted, grid = "#1f1f1f", "#5f5f5f", "#e3e3e3"
     sizes = table.index.to_numpy()
 
@@ -531,7 +611,9 @@ def run_benchmark(quick: bool = False) -> dict:
     run_start = time.perf_counter()
 
     print(f"Benchmark ({'QUICK' if quick else 'FULL'} run), SEED={SEED}")
+    load_final_configs()
     print("Configs:", json.dumps(FINAL_CONFIGS))
+    print("Config sources:", json.dumps(CONFIG_SOURCES))
 
     # 1. data ---------------------------------------------------------------
     start = time.perf_counter()
@@ -621,8 +703,9 @@ def run_benchmark(quick: bool = False) -> dict:
         stage_s["save"] = time.perf_counter() - start
         meta = {
             "quick": quick, "seed": SEED, "data_path": data_prep.DATA_PATH,
-            "configs": FINAL_CONFIGS, "max_tree_depth": MAX_TREE_DEPTH,
-            "svm_gamma_resolved": _svm_params(len(names))["gamma"],
+            "configs": FINAL_CONFIGS, "config_sources": CONFIG_SOURCES,
+            "max_tree_depth": MAX_TREE_DEPTH,
+            "svm_gamma_resolved": {k: _svm_params(k, len(names))["gamma"] for k in ("linear", "rff")},
             "n_features": len(names),
             "split_sizes": {"train": len(price_tr), "val": len(price_val), "test": len(price_te)},
             "cv": cv_info,
