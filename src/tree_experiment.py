@@ -108,10 +108,12 @@ def _select(rows, higher_is_better, simplicity):
     return min(close, key=lambda r: (simplicity(r), sign * r["Val_Metric"]))
 
 
-def run(quick: bool = False):
+def run(quick: bool = False, n_samples: int | None = None, out_dir=None):
     """
     Run hyperparameter sweeps for Task A and Task B on a stratified subsample.
-    Mirrors svm_tuning.py structure.
+    Mirrors svm_tuning.py structure. n_samples overrides the subsample size
+    (16,000; 5,000 with quick), and out_dir, if given, receives every output
+    (JSON, tables and figures); both are for the test.
     """
     print(f"--- Running Decision Tree Hyperparameter Sweep (quick={quick}) ---")
     
@@ -122,6 +124,8 @@ def run(quick: bool = False):
     results_dir = os.path.join("results", "quick") if quick else "results"
     table_dir = os.path.join(results_dir, "tree_experiment")
     figures_dir = table_dir if quick else os.path.join("report", "figures")
+    if out_dir is not None:
+        results_dir = table_dir = figures_dir = str(out_dir)
     for folder in (results_dir, table_dir, figures_dir):
         os.makedirs(folder, exist_ok=True)
     
@@ -144,7 +148,8 @@ def run(quick: bool = False):
     y_val_log = np.log(y_val_price)
     
     # 3. Subsample training data (stratified by tier)
-    n_samples = 5000 if quick else 16000
+    if n_samples is None:
+        n_samples = 5000 if quick else 16000
     np.random.seed(data_prep.SEED)
     
     idx_0 = np.where(y_train_tier_full == 0)[0]
