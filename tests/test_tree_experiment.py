@@ -30,5 +30,5 @@ def test_tree_experiment_tiny_run(tmp_path):
     assert selection["task_b_criterion"] in ("gini", "entropy")
     for name in ("tree_sweep_table.csv", "tree_learning_curve.csv",
                  "tree_depth_curves.png", "tree_depth_curves.pdf",
-                 "tree_learning_curve.png", "tree_learning_curve.pdf"):
+                 "tree_learning_curve.png", "tree_learning_curve.pdf", "slide_tree_depth_curves.png"):
         assert (tmp_path / name).exists(), f"{name} is missing"

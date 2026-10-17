@@ -69,6 +69,26 @@ def plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir):
     _save(fig, figures_dir, "tree_depth_curves")
 
 
+def plot_slide_depth_curves(depths, task_b_curves, figures_dir):
+    """
+    Slide version (presentation/slides.tex) of the Task B panel of
+    tree_depth_curves: 6 x 3.5 in, 16 pt text, thicker marks, legend beside
+    the axes as in svm_tuning.SLIDE_STYLE; PNG only.
+    """
+    fig, (ax,) = _figure((6.0, 3.5))
+    ax.tick_params(labelsize=16)
+    for crit, color, marker in (("gini", SLOTS[0], "o"), ("entropy", SLOTS[1], "s")):
+        ax.plot(depths, task_b_curves[crit]["val"], color=color, linewidth=2.5, marker=marker, markersize=7,
+                label=f"Validation, {crit}")
+        ax.plot(depths, task_b_curves[crit]["train"], color=color, linewidth=2.5, linestyle="--",
+                label=f"Train, {crit}")
+    ax.set_xticks(depths)
+    ax.set_xlabel("max_depth", fontsize=16, color=INK)
+    ax.set_ylabel("Task B F1", fontsize=16, color=INK)
+    fig.legend(loc="outside right center", frameon=False, fontsize=16, labelcolor=INK, handlelength=1.5)
+    fig.savefig(os.path.join(figures_dir, "slide_tree_depth_curves.png"), dpi=300, facecolor="white")
+
+
 def plot_learning_curve(curve, configs, figures_dir):
     """
     Train (dashed) and validation (solid) score of the chosen configs against
@@ -341,6 +361,7 @@ def run(quick: bool = False, n_samples: int | None = None, out_dir=None):
         
     # --- FIGURES (Part 3) ---
     plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir)
+    plot_slide_depth_curves(depths, task_b_curves, figures_dir)
     configs = {"A": f"depth {best_a_config['max_depth']}, leaf {best_a_config['min_samples_leaf']}",
                "B": f"{best_b_config['criterion']}, depth {best_b_config['max_depth']}, "
                     f"leaf {best_b_config['min_samples_leaf']}"}
