@@ -1,63 +1,198 @@
-# MLE-AI-201 Machine Learning — Final Project (Starter Pack)
+# bina.az house prices: a decision tree and an SVM from scratch
 
-Build **two models from scratch** (a decision tree and an SVM) on the
-**bina.az** real-estate dataset, then benchmark honestly against
-scikit-learn. Read the full brief in the project statement PDF handed out
-with this pack.
+MLE-AI-201 final project. We predict prices of real-estate listings scraped
+from bina.az (Azerbaijan) with two models written **from scratch in NumPy**,
+and benchmark them honestly against scikit-learn on identical data.
 
-- **Released:** Sun 04 Oct 2026
-- **Due:** **Sun 18 Oct 2026, 23:59 (Baku)** — two weeks, no late submissions.
-- **Demo:** defended in the session after the deadline.
+- **Task A, regression:** predict `log(price)`; errors are reported on the
+  log scale and in AZN.
+- **Task B, classification:** predict the price **tier**, premium (1) vs
+  standard (0), split at the **median price of the training set**.
+- **Our models:** `DecisionTree` (Gini / entropy / MSE, `src/decision_tree.py`)
+  and `PegasosSVM` (hinge loss, Pegasos sub-gradient solver, linear kernel
+  or random Fourier features for an RBF kernel, `src/svm.py`). No
+  scikit-learn code is used inside either model.
+- **Benchmark:** each of our models against matched scikit-learn baselines
+  (`DecisionTreeRegressor/Classifier`, `SGDClassifier` with hinge loss,
+  `SVC`), with 5-fold cross-validation, a held-out test set, timing and a
+  scaling study, followed by an error analysis.
 
-## What you submit (on Moodle)
-Exactly **three** things; **one member submits** for the whole team:
-1. **GitHub link** to your repo (tagged `v1.0-final`).
-2. **Report PDF** (IEEE two-column — use `report/report.tex`).
-3. **Slides PDF**.
+Headline test results (full run): our Task A tree reaches R² 0.847 on log
+price; on Task B our Gini tree gets F1 0.921 / ROC-AUC 0.970 and our linear
+Pegasos SVM F1 0.899 / ROC-AUC 0.960, each within 0.003 F1 of its best
+scikit-learn counterpart. Details: `report/tables/results_main.tex` and
+`results/error_analysis.md`.
 
-Keep `contribution_report.md` in the repo root (checked at the demo).
+## Requirements
 
-## The two tasks
-- **Task A — Regression:** predict `price` (consider `log(price)`).
-- **Task B — Classification:** predict a derived **price tier**
-  (premium vs standard, median split on the training set).
+- Python **3.13** (tested with 3.13.15 on macOS)
+- the pinned packages in `requirements.txt`
 
-## Golden rule
-Your **decision tree** and your **SVM** must be **your own NumPy code**.
-scikit-learn is for the comparison baselines (and the optional bonuses)
-only. For the SVM you do **not** need a QP/SMO solver — use the
-**Pegasos** sub-gradient method (see the statement and `src/svm.py`).
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-## Repo layout
+## Data
+
+The raw data is **not committed** (see `.gitignore` and `data/README.md`).
+
+1. Download the Kaggle dataset **sehriyarmemmedli/binaaz-sale-project**:
+   <https://www.kaggle.com/datasets/sehriyarmemmedli/binaaz-sale-project>
+2. It contains one file, `house_sale.csv`. Save it as
+   **`data/bina_az_sale.csv`** (the path in `src/data_prep.py`, `DATA_PATH`).
+3. Record the date you downloaded it below.
+
+The copy used for our results:
+
+| | |
+|---|---|
+| Kaggle file | `house_sale.csv`, dated 2025-02-03 on Kaggle |
+| Size | 141,882,994 bytes; 100,775 rows x 51 columns |
+| SHA-256 | `b6a4c67e0d3c712de31b9db53db53688792bc03099a213c1994c43114758aec2` |
+| Downloaded: 17.10.2026
+
+Check your copy with `shasum -a 256 data/bina_az_sale.csv`.
+
+## How to run
+
+From the repository root, with the virtual environment active:
+
+```bash
+python -m src.run_all            # everything: 8.8 minutes measured (see below)
+python -m src.run_all --quick    # smoke test on subsamples: about 65 seconds
+python -m pytest                 # the test suite (65 tests, a few seconds)
+```
+
+`run_all` runs four stages in order and passes `--quick` to each of them:
+
+| Stage | Script | Full run (measured) |
+|---|---|---|
+| 1. SVM tuning (train -> validation) | `src/svm_tuning.py` | 90 s |
+| 2. tree tuning | `src/tree_experiment.py`, `run(quick)` | not available yet: the benchmark uses the fallback tree config and prints a warning |
+| 3. benchmark vs scikit-learn | `src/benchmark.py` | 431 s (7.2 min) |
+| 4. results table, figures, error analysis | `src/analysis.py` | 7 s |
+| **total** | `src/run_all.py` | **528 s (8.8 min)** |
+
+Measured on an Apple M4 Mac (macOS 26.6). Each stage can also be run on its
+own (`python -m src.svm_tuning`, `python -m src.benchmark`, `python -m
+src.analysis`, each with `--quick`); the analysis reads the benchmark's
+outputs, so run the benchmark first.
+
+A full run writes to `results/`, `report/figures/` and `report/tables/`.
+`--quick` writes everything under `results/quick/` and never overwrites the
+report's numbers. Figures and everything in `results/` are gitignored: they
+are regenerated by `run_all`.
+
+## Outputs
+
+| Report item | File | Produced by |
+|---|---|---|
+| Main results table (all models x both tasks, test + CV mean ± std) | `report/tables/results_main.{tex,csv}` | `src/analysis.py` |
+| CV tables, Task A / Task B | `report/tables/benchmark_cv_task_{a,b}.tex`, `results/benchmark_cv_task_{a,b}.csv` | `src/benchmark.py` |
+| Test tables, Task A / Task B | `report/tables/benchmark_test_task_{a,b}.tex`, `results/benchmark_test_task_{a,b}.csv` | `src/benchmark.py` |
+| Fit time vs training size (log-log) | `report/figures/benchmark_scaling.{png,pdf}` | `src/benchmark.py` |
+| Our trees vs scikit-learn's (depth, leaves, root split, agreement) | `results/tree_comparison.csv` | `src/benchmark.py` |
+| Linear SVM: validation F1 and ROC-AUC vs λ | `report/figures/svm_linear_validation.{png,pdf}` | `src/svm_tuning.py` |
+| Linear SVM: margin width vs λ | `report/figures/svm_linear_margin.{png,pdf}` | `src/svm_tuning.py` |
+| Final SVM: training objective vs updates | `report/figures/svm_linear_final_convergence.{png,pdf}` | `src/svm_tuning.py` |
+| RFF SVM: λ and γ sweeps, convergence, margin vs validation F1 | `report/figures/svm_rff_{validation_sweeps,convergence,margin_validation}.{png,pdf}` | `src/svm_tuning.py` (via `src/svm_plots.py`) |
+| SVM sweep table and chosen configs | `results/svm_tuning/sweep_table.csv`, `results/svm_final_config.json` | `src/svm_tuning.py` |
+| Confusion matrices (our tree, our final SVM) | `report/figures/analysis_confusion_matrices.{png,pdf}` | `src/analysis.py` |
+| ROC curves, all Task B models | `report/figures/analysis_roc_curves.{png,pdf}` | `src/analysis.py` |
+| Precision-recall curves, all Task B models | `report/figures/analysis_pr_curves.{png,pdf}` | `src/analysis.py` |
+| Task A predicted vs true price | `report/figures/analysis_task_a_pred_vs_actual.{png,pdf}` | `src/analysis.py` |
+| Task A residuals vs true price | `report/figures/analysis_task_a_residuals.{png,pdf}` | `src/analysis.py` |
+| Feature importance, our trees vs scikit-learn | `report/figures/analysis_feature_importance.{png,pdf}` | `src/analysis.py` |
+| Final linear SVM weights (top ±15) | `report/figures/analysis_svm_weights.{png,pdf}` | `src/analysis.py` |
+| Errors by true-price decile | `report/figures/analysis_error_by_price_decile.{png,pdf}` | `src/analysis.py` |
+| Task B error vs distance from the tier threshold | `report/figures/analysis_error_vs_threshold_distance.{png,pdf}` | `src/analysis.py` |
+| Error analysis: tables, findings, 10 worst listings | `results/error_analysis.md`, `results/error_analysis/*.csv` | `src/analysis.py` |
+| Test-set predictions of every model | `results/test_predictions.csv` | `src/benchmark.py` |
+
+## Methodology notes
+
+- **Seeds.** `SEED = 42` (`src/data_prep.py`) is used for the split, every
+  subsample, the CV folds, both of our models, and every scikit-learn
+  estimator. Re-running gives the same numbers on the same platform; tiny
+  floating-point differences are possible across machines.
+- **Split.** 70% train / 15% validation / 15% test, a seeded random split
+  (`data_prep.train_val_test_split`). It is not stratified: stratifying on
+  the tier would need labels for every row before the split, i.e. a
+  threshold computed partly from test prices.
+- **No test data in any choice.** The tier threshold is the **median of the
+  training prices** (215,000 AZN); validation and test are labelled with that
+  same threshold. Standardization (for the SVMs) uses **training means and
+  standard deviations only**. Hyperparameters are chosen on the
+  **validation** split. The test split is used once, for the final numbers.
+- **SVM tuning** (`src/svm_tuning.py`). Grid: λ ∈ {1e-7, …, 1e-1} for the
+  linear and the RFF kernel; for RFF, γ ∈ {0.1, 1, 10} × 1/n_features with
+  500 random features; 20 epochs. Selection metric: validation F1.
+  **Selection rule:** for each kernel, among configurations within 0.005
+  validation F1 of the best, take the **largest λ**. Pegasos needs many more
+  updates than 1/λ to converge (step size 1/(λt)), and with λ = 1e-6 the RFF
+  model did not converge on 16k-row CV folds (F1 0.850 ± 0.035, vs 0.879 ±
+  0.010 at the chosen λ = 1e-5). The **final SVM** is the kernel whose chosen
+  configuration has the higher validation F1: linear, λ = 1e-3.
+- **Tree configuration.** Until the tree sweep provides
+  `results/tree_final_config.json`, the trees use the fallback in
+  `src/benchmark.py` (max depth 10, min samples split 10, min samples leaf
+  5); `run_all` prints a warning when this happens. Depth is capped at 12.
+- **Cross-validation on a 20,000-row subsample.** CV uses a stratified
+  20,000-row sample of train + validation, then 5-fold `StratifiedKFold`.
+  Inside each fold, the tier threshold and the scaler come from that fold's
+  training rows only. The subsample keeps the run practical: our pure-Python
+  tree takes about 10 s per fit at 16,000 rows but about 85 s at 64,000,
+  and CV fits three trees per fold.
+- **SVC capped at 10,000 rows.** Exact-kernel `SVC` grows roughly
+  quadratically with the number of rows, so it is fit on at most 10,000
+  stratified training rows, with C = 1/(n · λ), n being the rows SVC
+  actually sees (this makes its objective a rescaling of Pegasos' at the same
+  λ). Our SVMs and `SGDClassifier` use the full training split.
+- **Matched baselines.** Linear Pegasos is compared with `SGDClassifier(hinge,
+  l2, alpha = λ)` and `SVC(kernel="linear")`; RFF Pegasos with the same
+  random-Fourier construction (`RBFSampler`) + `SGDClassifier`, and with
+  `SVC(kernel="rbf")` at the same γ. Trees are compared with scikit-learn
+  trees at the same depth and minimum-sample settings.
+
+## Repository layout
+
 ```
 .
-├── README.md               # this file
-├── requirements.txt        # pin your versions
-├── .gitignore
-├── contribution_report.md  # who did what (keep in repo root)
-├── data/                   # dataset lives here (not committed — see data/README.md)
-├── src/                    # YOUR from-scratch code
-│   ├── data_prep.py        #   loading, cleaning, split, tier label
-│   ├── decision_tree.py    #   DecisionTree (Gini/entropy/MSE)
-│   ├── svm.py              #   PegasosSVM (hinge-loss sub-gradient)
-│   ├── evaluate.py         #   metrics + comparison helpers
-│   └── run_all.py          #   ONE command reproduces every number/figure
-├── report/                 # IEEE report (self-contained, no IEEEtran.cls)
-│   ├── report.tex
-│   └── figures/
-└── presentation/           # your slides PDF
+├── README.md                    this file
+├── requirements.txt             pinned dependencies
+├── contribution_report.md       who did what
+├── PROJECT_STATEMENT.pdf        the assignment brief
+├── data/
+│   └── README.md                where to get the data (the CSV itself is not committed)
+├── docs/
+│   └── SVM.md                   SVM design notes and handoff
+├── src/
+│   ├── data_prep.py             load, clean, features, split, tier label, standardize
+│   ├── decision_tree.py         DecisionTree from scratch (Gini / entropy / MSE)
+│   ├── svm.py                   PegasosSVM and random Fourier features from scratch
+│   ├── svm_experiment.py        RFF validation sweep and result export
+│   ├── svm_plots.py             RFF sweep, convergence and margin figures
+│   ├── svm_tuning.py            tunes both SVM kernels on train -> validation
+│   ├── evaluate.py              metrics (NumPy), curves, tree importances, result tables
+│   ├── benchmark.py             CV, held-out test, timing and scaling vs scikit-learn
+│   ├── analysis.py              main results table, figures, error analysis
+│   └── run_all.py               the single entry point
+├── tests/
+│   ├── test_decision_tree.py    our tree vs scikit-learn on toy data
+│   ├── test_evaluate.py         every metric vs sklearn.metrics; tree importances
+│   ├── test_svm.py              Pegasos updates, RFF mapping, prediction
+│   ├── test_svm_experiment.py   sweep selection and export
+│   └── test_svm_plots.py        plotted values and files
+├── report/
+│   ├── report.tex               the IEEE report
+│   ├── tables/                  LaTeX/CSV tables (generated)
+│   └── figures/                 figures (generated, gitignored)
+└── presentation/
+    └── README.md                slides go here
 ```
 
-## Reproducibility (graded)
-- Pin dependencies in `requirements.txt`; fix all random seeds.
-- `python -m src.run_all` must reproduce **every** headline number and
-  figure from a clean checkout.
-- Do **not** commit the raw data archive (see `.gitignore`).
+## Team and contributions
 
-## Quick start
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-# put the dataset in data/ (see data/README.md), then:
-python -m src.run_all
-```
+See [`contribution_report.md`](contribution_report.md).

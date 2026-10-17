@@ -91,15 +91,23 @@ MAX_TREE_DEPTH = 12        # hard cap on max_depth (our tree is O(n^1.6) per lev
 SVC_MAX_ROWS = 10_000      # exact-kernel SVC is fit on at most this many rows
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG_FILES = {
-    "svm": ROOT / "results/svm_final_config.json",
-    "tree": ROOT / "results/tree_final_config.json",
-}
+CONFIG_FILES = {"svm": "svm_final_config.json", "tree": "tree_final_config.json"}
 FINAL_CONFIGS = copy.deepcopy(FALLBACK_CONFIGS)
 CONFIG_SOURCES = {}
 
 
-def load_final_configs():
+def _config_path(name, quick):
+    """
+    results/<file>; in quick mode results/quick/<file> first, so that
+    `run_all --quick` benchmarks with the configs its own quick tuning just
+    wrote (and a standalone quick benchmark falls back to the full ones).
+    """
+    candidates = ([ROOT / "results/quick" / CONFIG_FILES[name]] if quick else []) \
+        + [ROOT / "results" / CONFIG_FILES[name]]
+    return next((p for p in candidates if p.exists()), candidates[-1])
+
+
+def load_final_configs(quick=False):
     """
     Refresh FINAL_CONFIGS (in place, so every helper sees it) from the tuning
     files, section by section, keeping FALLBACK_CONFIGS for anything missing.
@@ -118,7 +126,7 @@ def load_final_configs():
         target.update(loaded)
         CONFIG_SOURCES[label] = str(path.relative_to(ROOT))
 
-    path = CONFIG_FILES["svm"]
+    path = _config_path("svm", quick)
     svm_file = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     if svm_file and "configs" not in svm_file:
         raise ValueError(f"{path.name} has no 'configs' section (old format?); "
@@ -137,7 +145,7 @@ def load_final_configs():
     else:
         CONFIG_SOURCES["svm_final"] = fallback
 
-    path = CONFIG_FILES["tree"]
+    path = _config_path("tree", quick)
     tree_file = json.loads(path.read_text(encoding="utf-8"))["config"] if path.exists() else {}
     for key in ("tree_task_a", "tree_task_b"):
         if key in tree_file:
@@ -629,7 +637,7 @@ def run_benchmark(quick: bool = False) -> dict:
     run_start = time.perf_counter()
 
     print(f"Benchmark ({'QUICK' if quick else 'FULL'} run), SEED={SEED}")
-    load_final_configs()
+    load_final_configs(quick)
     print("Configs:", json.dumps(FINAL_CONFIGS))
     print("Config sources:", json.dumps(CONFIG_SOURCES))
 

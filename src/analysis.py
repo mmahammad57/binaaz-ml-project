@@ -39,10 +39,15 @@ from .data_prep import SEED
 from .svm import PegasosSVM
 
 ROOT = Path(__file__).resolve().parents[1]
-RESULTS = ROOT / "results"
-FIGURES = ROOT / "report/figures"
-TABLES = ROOT / "report/tables"
-ERRORS = RESULTS / "error_analysis"
+# Output folders; run_analysis(quick=True) redirects them all under results/quick.
+PATHS = {}
+
+
+def _set_paths(quick):
+    results = ROOT / ("results/quick" if quick else "results")
+    PATHS.update(results=results, errors=results / "error_analysis",
+                 figures=results if quick else ROOT / "report/figures",
+                 tables=results if quick else ROOT / "report/tables")
 
 # Same style as benchmark_scaling: dataviz reference palette, categorical slots
 # in fixed order, ink-coloured text, recessive grid, white background.
@@ -79,16 +84,23 @@ def _read_table(path):
             for model, row in frame.iterrows()}
 
 
-def load_inputs():
-    meta = json.loads((RESULTS / "benchmark_meta.json").read_text(encoding="utf-8"))
-    if meta["quick"]:
-        raise RuntimeError("results/ holds a QUICK benchmark run; run python -m src.benchmark first")
-    tables = {(kind, task): _read_table(RESULTS / f"benchmark_{kind}_task_{task.lower()}.csv")
+def load_inputs(quick):
+    results = PATHS["results"]
+    meta_path = results / "benchmark_meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"{meta_path.relative_to(ROOT)} not found; run python -m src.benchmark"
+                                f"{' --quick' if quick else ''} first")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta["quick"] != quick:
+        raise RuntimeError(f"{meta_path.relative_to(ROOT)} is from a {'QUICK' if meta['quick'] else 'FULL'} "
+                           f"benchmark run; re-run the benchmark{' --quick' if quick else ''}")
+    tables = {(kind, task): _read_table(results / f"benchmark_{kind}_task_{task.lower()}.csv")
               for kind in ("cv", "test") for task in ("A", "B")}
-    preds = pd.read_csv(RESULTS / "test_predictions.csv")
-    importances = pd.read_csv(RESULTS / "tree_importances.csv")
-    tree_cmp = pd.read_csv(RESULTS / "tree_comparison.csv", index_col=0)
-    svm_cfg = json.loads((RESULTS / "svm_final_config.json").read_text(encoding="utf-8"))
+    preds = pd.read_csv(results / "test_predictions.csv")
+    importances = pd.read_csv(results / "tree_importances.csv")
+    tree_cmp = pd.read_csv(results / "tree_comparison.csv", index_col=0)
+    # The SVM configs the benchmark actually used (not whatever the config file says now).
+    svm_cfg = meta["configs"]["svm"]
     return meta, tables, preds, importances, tree_cmp, svm_cfg
 
 
@@ -127,7 +139,7 @@ def main_results_table(tables):
             for split, kind in (("test", "test"), ("CV", "cv")):
                 values = tables[(kind, task)][model]
                 rows[f"{model}, {split}"] = {col: _scaled(values[m], k) for m, col, k in specs}
-    ev.save_table(rows, TABLES / "results_main.csv", TABLES / "results_main.tex", decimals=3)
+    ev.save_table(rows, PATHS["tables"] / "results_main.csv", PATHS["tables"] / "results_main.tex", decimals=3)
     return rows
 
 
@@ -165,7 +177,7 @@ def _save(fig, stem, title, note=None):
     fig.tight_layout(rect=(0, 0.04 if note else 0, 1, 0.97))
     paths = []
     for ext in ("png", "pdf"):
-        path = FIGURES / f"{stem}.{ext}"
+        path = PATHS["figures"] / f"{stem}.{ext}"
         fig.savefig(path, dpi=200, facecolor="white", bbox_inches="tight")
         paths.append(path)
     return paths
@@ -574,11 +586,12 @@ def write_markdown(path, frame, tables, svm_stats, worst, bullets, threshold):
 
 
 # --- Entry point ------------------------------------------------------------------
-def run_analysis():
+def run_analysis(quick: bool = False) -> dict:
     start = time.perf_counter()
-    for d in (FIGURES, TABLES, ERRORS):
-        d.mkdir(parents=True, exist_ok=True)
-    meta, tables, preds, importances, tree_cmp, svm_cfg = load_inputs()
+    _set_paths(quick)
+    for key in ("figures", "tables", "errors"):
+        PATHS[key].mkdir(parents=True, exist_ok=True)
+    meta, tables, preds, importances, tree_cmp, svm_cfg = load_inputs(quick)
     threshold = meta["test"]["tier_threshold_train_median"]
     final_kernel = svm_cfg["final"]
     name_svm = f"Pegasos {'linear' if final_kernel == 'linear' else 'RFF'} (ours)"
@@ -596,10 +609,10 @@ def run_analysis():
 
     # 1. Main results table.
     main_results_table(tables)
-    print("Wrote report/tables/results_main.{csv,tex}")
+    print(f"Wrote {PATHS['tables'].relative_to(ROOT)}/results_main.{{csv,tex}}")
 
     # 2. SVM weights: refit the final LINEAR config (benchmark does not save w).
-    cfg = dict(svm_cfg["configs"]["linear"])
+    cfg = dict(svm_cfg["linear"])
     if cfg["gamma"] == "scale":
         cfg["gamma"] = 1.0 / X.shape[1]
     X_tr, X_te = X[train_ids], X[test_ids]
@@ -617,9 +630,12 @@ def run_analysis():
     top_weights = {"positive": [(names[j], float(svm.w[j])) for j in order[::-1][:15]],
                    "negative": [(names[j], float(svm.w[j])) for j in order[:15]]}
     pd.DataFrame({"feature": names, "weight": svm.w}).sort_values("weight").to_csv(
-        ERRORS / "svm_linear_weights.csv", index=False)
+        PATHS["errors"] / "svm_linear_weights.csv", index=False)
+    # The quick benchmark trains on a 5k subsample, so its scores differ from this full-split refit.
+    check_note = " (quick run: benchmark SVM was fit on a 5k subsample, so no match expected)" if quick else ""
     print(f"Linear SVM refit: ||w|| {svm_stats['weight_norm']:.4f}, margin {svm_stats['margin_width']:.4f}, "
-          f"{svm_stats['support_count']:,} support vectors; max |score - saved| = {svm_stats['score_check']:.1e}")
+          f"{svm_stats['support_count']:,} support vectors; max |score - saved| = "
+          f"{svm_stats['score_check']:.1e}{check_note}")
 
     # 3. Figures.
     frame = analysis_frame(df, preds, train_ids, names_tree, name_svm, threshold)
@@ -636,17 +652,25 @@ def run_analysis():
 
     # 4. Error tables, worst listings, findings.
     for key in ("category", "city", "district_bin", "decile", "top_1pct", "threshold_distance"):
-        errors_by(frame, key).to_csv(ERRORS / f"errors_by_{key}.csv")
+        errors_by(frame, key).to_csv(PATHS["errors"] / f"errors_by_{key}.csv")
     worst = worst_listings(frame)
-    worst.to_csv(ERRORS / "worst_task_a_listings.csv", index=False)
+    worst.to_csv(PATHS["errors"] / "worst_task_a_listings.csv", index=False)
     bullets = findings(frame, tables, tree_cmp, svm_stats, top_weights, names_tree, name_svm)
-    write_markdown(RESULTS / "error_analysis.md", frame, tables, svm_stats, worst, bullets, threshold)
+    markdown = PATHS["results"] / "error_analysis.md"
+    write_markdown(markdown, frame, tables, svm_stats, worst, bullets, threshold)
 
-    print("Wrote " + ", ".join(sorted({p.stem for p in figures})) + " (.png/.pdf) in report/figures/")
-    print("Wrote results/error_analysis.md and results/error_analysis/*.csv")
+    print("Wrote " + ", ".join(sorted({p.stem for p in figures}))
+          + f" (.png/.pdf) in {PATHS['figures'].relative_to(ROOT)}/")
+    print(f"Wrote {markdown.relative_to(ROOT)} and {PATHS['errors'].relative_to(ROOT)}/*.csv")
     print("\nFindings:\n" + "\n".join(f"- {b}" for b in bullets))
     print(f"\nDone in {time.perf_counter() - start:.1f}s")
+    return {"findings": bullets, "figures": figures, "markdown": markdown}
 
 
 if __name__ == "__main__":
-    run_analysis()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Results table, figures and error analysis.")
+    parser.add_argument("--quick", action="store_true",
+                        help="analyse the quick benchmark outputs in results/quick")
+    run_analysis(parser.parse_args().quick)
