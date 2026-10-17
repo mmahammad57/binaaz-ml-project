@@ -76,11 +76,15 @@ def run(quick: bool = False):
     """
     print(f"--- Running Decision Tree Hyperparameter Sweep (quick={quick}) ---")
     
-    # Setup output directories based on mode
-    results_dir = os.path.join("results", "quick" if quick else "")
-    figures_dir = os.path.join("report", "figures")
-    os.makedirs(results_dir, exist_ok=True)
-    os.makedirs(figures_dir, exist_ok=True)
+    # Output folders as in svm_tuning.py: the config JSONs go to results/
+    # (results/quick/ in quick mode), the sweep table to <results>/tree_experiment/,
+    # and the figures to report/figures/ in full mode only (quick mode keeps them
+    # next to the sweep table, so it never overwrites a report figure).
+    results_dir = os.path.join("results", "quick") if quick else "results"
+    table_dir = os.path.join(results_dir, "tree_experiment")
+    figures_dir = table_dir if quick else os.path.join("report", "figures")
+    for folder in (results_dir, table_dir, figures_dir):
+        os.makedirs(folder, exist_ok=True)
     
     # 1. Load data
     df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
@@ -255,7 +259,7 @@ def run(quick: bool = False):
     print(selection_rule)
     
     df_results = pd.DataFrame(results_table)
-    df_results.to_csv(os.path.join(results_dir, "tree_sweep_table.csv"), index=False)
+    df_results.to_csv(os.path.join(table_dir, "tree_sweep_table.csv"), index=False)
     
     final_config = {
         "config": {
