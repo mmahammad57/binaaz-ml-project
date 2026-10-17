@@ -38,9 +38,9 @@ def run(quick: bool = False):
     y_val_price = price[splits.val]
     
     # 2. Make Task B labels (tier) using ONLY training median
-    train_median = np.median(y_train_full)
-    y_train_tier_full = (y_train_full > train_median).astype(int)
-    y_val_tier = (y_val_price > train_median).astype(int)
+    train_median = splits.threshold
+    y_train_tier_full = splits.y_train
+    y_val_tier = splits.y_val
     
     # Task A targets (log price)
     y_train_log_full = np.log(y_train_full)
