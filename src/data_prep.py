@@ -237,23 +237,38 @@ def train_val_test_split(X, y, y_tier=None, val_size=0.15, test_size=0.15, seed=
 
 def standardize(X_tr, *others):
     """
-    Standardize features using TRAIN statistics only (mean/std from X_tr),
-    then apply the same transform to the other splits.
+    Standardize features using TRAIN statistics only (median impute, mean/std from X_tr),
+    then apply the exact same transform to the other splits to prevent leakage.
     Return the scaled arrays in the same order as given.
-    (Needed for the SVM; trees don't require it.)
     """
-    # Calculate mean and standard deviation strictly from training set features
+    X_tr = X_tr.copy()
+
+    # 1. Compute column medians strictly from TRAIN set for any remaining NaNs
+    train_medians = np.nanmedian(X_tr, axis=0)
+    train_medians = np.nan_to_num(train_medians, nan=0.0)
+
+    # Impute missing values in Train
+    inds_tr = np.where(np.isnan(X_tr))
+    X_tr[inds_tr] = np.take(train_medians, inds_tr[1])
+
+    # Impute missing values in Val / Test using TRAIN medians
+    others_imputed = []
+    for X in others:
+        X_copy = X.copy()
+        inds = np.where(np.isnan(X_copy))
+        X_copy[inds] = np.take(train_medians, inds[1])
+        others_imputed.append(X_copy)
+
+    # 2. Standardize features using TRAIN mean and standard deviation
     mean = np.mean(X_tr, axis=0)
     std = np.std(X_tr, axis=0)
 
-    # Prevent zero-division for constant features across samples
+    # Prevent division by zero for constant features
     std[std == 0.0] = 1.0
 
     # Scale the training features
     X_tr_scaled = (X_tr - mean) / std
-
-    # Apply the exact same training mean and std to validation and test sets
-    others_scaled = [(X - mean) / std for X in others]
+    others_scaled = [(X - mean) / std for X in others_imputed]
 
     if others_scaled:
         return (X_tr_scaled, *others_scaled)
