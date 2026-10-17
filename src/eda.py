@@ -6,7 +6,7 @@ Generates PNG plots for the IEEE report and saves them to report/figures/.
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd 
+import pandas as pd
 import seaborn as sns
 
 from src.data_prep import clean, load_raw, make_tier_label
@@ -69,8 +69,33 @@ def plot_area_vs_price(cleaned_df: pd.DataFrame):
     print(f"[EDA] Saved figure: {fig_path}")
 
 
-if __name__ == "__main__":
+def plot_class_balance(cleaned_df: pd.DataFrame):
+    """Plot class balance for binary price tier target (Task B)."""
+    y_tier, threshold = make_tier_label(cleaned_df["price"].values)
+    plt.figure(figsize=(5, 4))
+    counts = np.bincount(y_tier)
+
+    plt.bar(["Standard (0)", "Premium (1)"], counts, color=["#4C72B0", "#C44E52"])
+    plt.title(f"Task B Class Balance (Threshold: {threshold:,.0f} AZN)")
+    plt.ylabel("Number of Listings")
+    plt.tight_layout()
+
+    fig_path = os.path.join(FIGURES_DIR, "class_balance.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print(f"[EDA] Saved figure: {fig_path}")
+
+
+def run_eda():
+    print("[EDA] Loading data for EDA...")
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
+
     plot_price_distribution(cleaned_df)
     plot_area_vs_price(cleaned_df)
+    plot_class_balance(cleaned_df)
+    print("[EDA] All EDA figures generated successfully!")
+
+
+if __name__ == "__main__":
+    run_eda()
