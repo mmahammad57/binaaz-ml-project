@@ -61,12 +61,14 @@ def load_raw(path: str = DATA_PATH):
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean the raw frame:
-      - fix dtypes (prices/areas to numeric; strip currency/text),
-      - handle missing values,
-      - drop duplicates,
-      - handle outliers (document your rule),
-      - drop LEAKAGE_COLUMNS.
-    Return the cleaned DataFrame.
+      - drop LEAKAGE_COLUMNS and uninformative metadata,
+      - parse complex strings ('Mərtəbə' into floor, total_floors & has_floor flag),
+      - parse 'Torpaq sahəsi' into land_area_sot,
+      - fix dtypes (prices/areas to numeric; strip currency/text/commas),
+      - handle missing values and duplicates,
+      - handle outliers with reasonable domain boundaries.
+    Note: NO global dataset statistics (e.g. overall medians) are computed here
+    to strictly prevent data leakage before the train/val/test split.
     """
     df = df.copy()
 
@@ -74,14 +76,32 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     existing_drop_cols = [col for col in LEAKAGE_COLUMNS if col in df.columns]
     df.drop(columns=existing_drop_cols, inplace=True)
 
-    # 2. Parse 'Mərtəbə' (e.g. '3 / 9' -> floor=3, total_floors=9)
+    # 2. Parse 'Mərtəbə' (e.g. '3 / 9' -> floor=3, total_floors=9, has_floor=1)
     if 'Mərtəbə' in df.columns:
+        has_floor_mask = df['Mərtəbə'].notna() & (
+            df['Mərtəbə'].astype(str).str.strip() != ''
+        )
         floor_split = df['Mərtəbə'].astype(str).str.split('/', expand=True)
-        df['floor'] = pd.to_numeric(floor_split[0].str.strip(), errors='coerce')
+
+        # Assign 0.0 for missing floor listings (houses, villas, offices)
+        df['floor'] = (
+            pd.to_numeric(floor_split[0].str.strip(), errors='coerce')
+            .fillna(0.0)
+            .astype(float)
+        )
+
         if floor_split.shape[1] > 1:
-            df['total_floors'] = pd.to_numeric(floor_split[1].str.strip(), errors='coerce')
+            df['total_floors'] = (
+                pd.to_numeric(floor_split[1].str.strip(), errors='coerce')
+                .fillna(0.0)
+                .astype(float)
+            )
         else:
-            df['total_floors'] = np.nan
+            df['total_floors'] = 0.0
+
+        # Create binary indicator flag: 1 for apartments with floor info, 0 for houses/offices
+        df['has_floor'] = has_floor_mask.astype(int)
+
         df.drop(columns=['Mərtəbə'], inplace=True)
 
     # 3. Parse 'Torpaq sahəsi' (e.g. '5 sot' -> land_area_sot=5.0)
@@ -93,7 +113,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
             .str.replace(' ', '', regex=False)
             .str.replace(',', '.', regex=False)
         )
-        df['land_area_sot'] = pd.to_numeric(sot_str, errors='coerce').fillna(0.0)
+        df['land_area_sot'] = pd.to_numeric(sot_str, errors='coerce').fillna(
+            0.0
+        )
         df.drop(columns=['Torpaq sahəsi'], inplace=True)
 
     # 4. Convert numeric columns arriving as formatted strings
@@ -101,21 +123,25 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_columns:
         if col in df.columns:
             s = df[col].astype(str).str.replace('m²', '', regex=False)
-            s = s.str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
+            s = s.str.replace(' ', '', regex=False).str.replace(
+                ',', '.', regex=False
+            )
             df[col] = pd.to_numeric(s, errors='coerce')
 
     # 5. Handle missing values & remove exact duplicates
     df.dropna(subset=['price', 'Sahə', 'Otaq sayı'], inplace=True)
     df.drop_duplicates(inplace=True)
 
-    # Impute missing floors with median values
-    if 'floor' in df.columns:
-        df['floor'] = df['floor'].fillna(df['floor'].median())
-    if 'total_floors' in df.columns:
-        df['total_floors'] = df['total_floors'].fillna(df['total_floors'].median())
-
     # Fill remaining categorical missing values
-    categorical_cols = ['location', 'city', 'Binanın növü', 'Kateqoriya', 'Təmir', 'Çıxarış', 'İpoteka']
+    categorical_cols = [
+        'location',
+        'city',
+        'Binanın növü',
+        'Kateqoriya',
+        'Təmir',
+        'Çıxarış',
+        'İpoteka',
+    ]
     for col in categorical_cols:
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str).str.strip()
