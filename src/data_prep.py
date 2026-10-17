@@ -74,18 +74,45 @@ def clean(df):
     existing_drop_cols = [col for col in LEAKAGE_COLUMNS if col in df.columns]
     df.drop(columns=existing_drop_cols, inplace=True)
 
-    # 2. Convert numeric columns arriving as formatted strings
-    numeric_columns = ['price', 'Sahə', 'Otaq sayı', 'Mərtəbə', 'Torpaq sahəsi', 'lat', 'lng', 'views']
+    # 2. Parse 'Mərtəbə' (e.g. '3 / 9' -> floor=3, total_floors=9)
+    if 'Mərtəbə' in df.columns:
+        floor_split = df['Mərtəbə'].astype(str).str.split('/', expand=True)
+        df['floor'] = pd.to_numeric(floor_split[0].str.strip(), errors='coerce')
+        if floor_split.shape[1] > 1:
+            df['total_floors'] = pd.to_numeric(floor_split[1].str.strip(), errors='coerce')
+        else:
+            df['total_floors'] = np.nan
+        df.drop(columns=['Mərtəbə'], inplace=True)
+
+    # 3. Parse 'Torpaq sahəsi' (e.g. '5 sot' -> land_area_sot=5.0)
+    if 'Torpaq sahəsi' in df.columns:
+        sot_str = (
+            df['Torpaq sahəsi']
+            .astype(str)
+            .str.replace('sot', '', regex=False)
+            .str.replace(' ', '', regex=False)
+            .str.replace(',', '.', regex=False)
+        )
+        df['land_area_sot'] = pd.to_numeric(sot_str, errors='coerce').fillna(0.0)
+        df.drop(columns=['Torpaq sahəsi'], inplace=True)
+
+    # 4. Convert numeric columns arriving as formatted strings
+    numeric_columns = ['price', 'Sahə', 'Otaq sayı', 'lat', 'lng', 'views']
     for col in numeric_columns:
         if col in df.columns:
-            # Force string cleanup (replace m², spaces, commas) then convert to float
             s = df[col].astype(str).str.replace('m²', '', regex=False)
             s = s.str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
             df[col] = pd.to_numeric(s, errors='coerce')
 
-    # 3. Handle missing values & remove exact duplicates
+    # 5. Handle missing values & remove exact duplicates
     df.dropna(subset=['price', 'Sahə', 'Otaq sayı'], inplace=True)
     df.drop_duplicates(inplace=True)
+
+    # Impute missing floors with median values
+    if 'floor' in df.columns:
+        df['floor'] = df['floor'].fillna(df['floor'].median())
+    if 'total_floors' in df.columns:
+        df['total_floors'] = df['total_floors'].fillna(df['total_floors'].median())
 
     # Fill remaining categorical missing values
     categorical_cols = ['location', 'city', 'Binanın növü', 'Kateqoriya', 'Təmir', 'Çıxarış', 'İpoteka']
@@ -93,7 +120,7 @@ def clean(df):
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str).str.strip()
 
-    # 4. Outlier handling based on realistic real-estate price and area ranges
+    # 6. Outlier handling based on realistic real-estate price and area ranges
     df = df[(df['price'] >= 10000) & (df['price'] <= 5000000)]
     df = df[(df['Sahə'] >= 10) & (df['Sahə'] <= 2000)]
 
@@ -193,21 +220,33 @@ def standardize(X_tr, *others):
 
 
 if __name__ == '__main__':
-    # 1. Load and clean raw dataset
+    # Sanity test execution
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
-
-    # 2. Extract feature matrix X and target y
     X, y, features = make_features(cleaned_df)
 
-    # 3. Partition dataset into train, validation, and test splits
-    X_tr, y_tr, X_val, y_val, X_te, y_te = train_val_test_split(X, y)
+    # Generate full dataset price-tier for stratified split
+    y_tier_full, _ = make_tier_label(y)
 
-    # 4. Generate binary price-tier classification labels strictly using Train median
-    y_tr_tier, train_thresh = make_tier_label(y_tr)
-    y_val_tier, _ = make_tier_label(y_val, threshold=train_thresh)
-    y_te_tier, _ = make_tier_label(y_te, threshold=train_thresh)
+    # Stratified split execution
+    (
+        X_tr,
+        y_tr,
+        X_val,
+        y_val,
+        X_te,
+        y_te,
+        y_tr_tier,
+        y_val_tier,
+        y_te_tier,
+    ) = train_val_test_split(X, y, y_tier=y_tier_full)
 
-    # 5. Standardize feature splits using Train mean and std
+    # Standardize features
     X_tr_sc, X_val_sc, X_te_sc = standardize(X_tr, X_val, X_te)
+
+    # Verify no NaN values exist in design matrices
+    assert not np.isnan(X_tr_sc).any(), "NaN values found in X_tr_sc!"
+    print(
+        "[Data Prep] Verification passed: Zero NaNs in final design matrices."
+    )
     print("[Data Prep] Preprocessing pipeline self-test finished successfully.")
