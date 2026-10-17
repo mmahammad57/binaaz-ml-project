@@ -109,6 +109,39 @@ def roc_auc(y_true, scores) -> float:
     return float(u / (n_pos * n_neg))
 
 
+def _ranked_counts(y_true, scores):
+    """
+    Cumulative true/false positives when the decision threshold is lowered
+    through each distinct score, highest first. Returns (tps, fps, thresholds).
+    """
+    y_true, scores = _paired_1d(y_true, scores)
+    if not np.isin(y_true, (0, 1)).all():
+        raise ValueError("labels must be 0 (standard) or 1 (premium)")
+    order = np.argsort(-scores, kind="mergesort")
+    scores, y_true = scores[order], y_true[order]
+    # Last position of each run of tied scores: a threshold can't split ties.
+    last = np.r_[np.flatnonzero(np.diff(scores)), len(scores) - 1]
+    tps = np.cumsum(y_true)[last]
+    fps = (last + 1) - tps
+    return tps, fps, scores[last]
+
+
+def roc_curve(y_true, scores):
+    """(fpr, tpr, thresholds), starting at (0, 0); thresholds descend."""
+    tps, fps, thresholds = _ranked_counts(y_true, scores)
+    if tps[-1] == 0 or fps[-1] == 0:
+        raise ValueError("ROC curve needs both classes in y_true")
+    return np.r_[0.0, fps / fps[-1]], np.r_[0.0, tps / tps[-1]], np.r_[np.inf, thresholds]
+
+
+def precision_recall_curve(y_true, scores):
+    """(precision, recall, thresholds) for the premium class; thresholds descend."""
+    tps, fps, thresholds = _ranked_counts(y_true, scores)
+    if tps[-1] == 0:
+        raise ValueError("precision-recall curve needs at least one positive")
+    return tps / (tps + fps), tps / tps[-1], thresholds
+
+
 # --- Tree diagnostics -------------------------------------------------------
 def tree_feature_importances(tree, n_features: int) -> np.ndarray:
     """

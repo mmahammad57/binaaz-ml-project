@@ -131,6 +131,34 @@ def test_roc_auc_single_class_returns_nan_like_sklearn(y_true):
         assert np.isnan(skm.roc_auc_score(y_true, scores))
 
 
+@pytest.mark.parametrize("tied", [False, True])
+def test_roc_curve_matches_sklearn(rng, tied):
+    y = rng.integers(0, 2, 500)
+    scores = y + rng.normal(0, 1.0, 500)
+    if tied:
+        scores = np.round(scores)
+    fpr, tpr, thr = ev.roc_curve(y, scores)
+    sk_fpr, sk_tpr, sk_thr = skm.roc_curve(y, scores, drop_intermediate=False)
+    np.testing.assert_allclose(fpr, sk_fpr)
+    np.testing.assert_allclose(tpr, sk_tpr)
+    np.testing.assert_array_equal(thr[1:], sk_thr[1:])
+
+
+@pytest.mark.parametrize("tied", [False, True])
+def test_precision_recall_curve_matches_sklearn(rng, tied):
+    y = rng.integers(0, 2, 500)
+    scores = y + rng.normal(0, 1.0, 500)
+    if tied:
+        scores = np.round(scores)
+    precision, recall, thr = ev.precision_recall_curve(y, scores)
+    sk_p, sk_r, sk_thr = skm.precision_recall_curve(y, scores)
+    # sklearn lists thresholds ascending, stops once recall reaches 1 and
+    # appends a (precision=1, recall=0) end point; compare on its thresholds.
+    ours = dict(zip(thr.tolist(), zip(precision, recall)))
+    for t, p, r in zip(sk_thr, sk_p[:-1], sk_r[:-1]):
+        assert ours[t] == pytest.approx((p, r))
+
+
 # --- Tree feature importances -----------------------------------------------
 # Small hand-fixed datasets on which our tree and sklearn's grow identical
 # trees, with every split winning by a clear margin (no ties for either
