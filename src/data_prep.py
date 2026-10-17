@@ -132,9 +132,10 @@ def make_tier_label(y_price, threshold=None):
     Return (y_tier, threshold).  The threshold must come from TRAIN only
     (no peeking at val/test) to avoid leakage.
     """
+    # Calculate median threshold strictly from the training set if not provided
     if threshold is None:
         threshold = float(np.median(y_price))
-
+    # Assign binary target: 1 for premium (price >= threshold), 0 for standard
     y_tier = (y_price >= threshold).astype(int)
     print(f"[Data Prep] Price-tier binary labels generated with threshold: {threshold:.2f} AZN")
     return y_tier, threshold
