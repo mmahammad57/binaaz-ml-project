@@ -18,8 +18,36 @@ DATA_PATH = "data/bina_az_sale.csv"   # change if your filename differs
 # Columns that LEAK the target (derived from price). Drop these before training.
 # TODO: list the actual leakage columns you find (e.g. a unit/per-m2 price).
 LEAKAGE_COLUMNS: list[str] = [
-    # "unit_price",
-    # "total_price",
+    "unit_price",
+    "total_price",
+    "id_x",
+    "id_y",
+    "estate_id",
+    "estate_details_id_x",
+    "estate_details_id_y",
+    "rel_url",
+    "estate_rel_url_x",
+    "estate_rel_url_y",
+    "estate_rel_url",
+    "img_url",
+    "datetime_scrape_x",
+    "datetime_scrape_y",
+    "day_x",
+    "hour_x",
+    "day_y",
+    "hour_y",
+    "updated",
+    "city_when",
+    "owner_name",
+    "owner_title",
+    "shop_name",
+    "shop_title",
+    "address",
+    "description",
+    "attributes",
+    "extra_info",
+    "currency_x",
+    "currency_y",
 ]
 
 
