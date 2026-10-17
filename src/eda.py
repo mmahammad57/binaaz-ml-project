@@ -7,7 +7,7 @@ Run from the repo root:
 
 Only training rows are looked at, so nothing seen here can inform a choice
 through validation or test prices. The split is the benchmark's split
-(data_prep.train_val_test_split, rebuilt with analysis.rebuild_split).
+(src/splits.py, get_splits).
 
 Outputs
     report/figures/eda_price.{png,pdf}      price and log-price histograms, tier balance
@@ -26,7 +26,8 @@ import numpy as np
 import pandas as pd
 
 from . import data_prep
-from .analysis import BLUE_RAMP, DOUBLE, FONT, GRID, INK, MUTED, SLOTS, SMALL, rebuild_split
+from .analysis import BLUE_RAMP, DOUBLE, FONT, GRID, INK, MUTED, SLOTS, SMALL
+from .splits import get_splits
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_ROOMS = 6                 # rooms >= 6 share one box
@@ -38,9 +39,8 @@ def load_training_rows():
     with contextlib.redirect_stdout(io.StringIO()):
         df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
         X, price, _ = data_prep.make_features(df)
-        train_ids, _, _ = rebuild_split(df, X, price)
-        _, threshold = data_prep.make_tier_label(price[train_ids])
-    return df.iloc[train_ids].copy(), threshold
+    split = get_splits(X, price)
+    return df.iloc[split.train].copy(), split.threshold
 
 
 def _axes(ncols, height):

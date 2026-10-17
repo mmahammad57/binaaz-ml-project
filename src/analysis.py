@@ -38,6 +38,7 @@ import pandas as pd
 from . import data_prep
 from . import evaluate as ev
 from .data_prep import SEED
+from .splits import get_splits
 from .svm import PegasosSVM
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,18 +110,6 @@ def load_inputs(quick):
     # The SVM configs the benchmark actually used (not whatever the config file says now).
     svm_cfg = meta["configs"]["svm"]
     return meta, tables, preds, importances, tree_cmp, svm_cfg
-
-
-def rebuild_split(df, X, price):
-    """
-    Recreate the benchmark's split (same call, same row-id trick) to get the
-    row positions of each split (for district sizes, decile edges, class
-    balance and the SVM refit).
-    """
-    row_id = np.arange(len(price), dtype=float)
-    with contextlib.redirect_stdout(io.StringIO()):
-        X_tr, _, X_val, _, X_te, _ = data_prep.train_val_test_split(np.column_stack([X, row_id]), price)
-    return X_tr[:, -1].astype(int), X_val[:, -1].astype(int), X_te[:, -1].astype(int)
 
 
 # --- Results tables -----------------------------------------------------------
@@ -514,7 +503,9 @@ def _md(frame, index=True, digits=2):
 
 GLOSSARY = {"Sahə": "floor area", "Otaq sayı": "rooms", "has_floor": "being an apartment",
             "floor": "floor", "total_floors": "building height", "land_area_sot": "land area",
-            "lat": "latitude", "lng": "longitude", "views": "page views"}
+            "lat": "latitude", "lng": "longitude", "views": "page views",
+            "repair": "renovated (flag)", "bill_of_sale": "title deed (flag)",
+            "mortgage": "mortgage (flag)", "vip": "VIP listing (flag)", "featured": "featured listing (flag)"}
 # Suffixes of bina.az location names: q. = qəsəbə (settlement), m. = metro
 # station area, r. = rayon (district).
 LOCATION_SUFFIX = {" q.": " settlement", " m.": " metro area", " r.": " district"}
@@ -573,11 +564,11 @@ def findings(frame, tables, tree_cmp, svm_stats, top_weights, names_tree, name_s
     dense = d.loc[">= 1000"]
     unseen = int(d["n test"].get("0 (unseen in train)", 0))
     out.append(
-        f"Sparse districts do worse: listings in districts with fewer than 50 training rows "
+        f"Sparse districts are harder to price: listings in districts with fewer than 50 training rows "
         f"(n = {sparse_n} test listings, {unseen} of them from districts never seen in training) "
         f"have a median absolute error of {sparse_ape:.1%} vs "
-        f"{dense['A MdAPE %']:.1f}% in districts with 1,000+ training rows, and a Task B tree error "
-        f"rate of {sparse_err:.1%} vs {dense['B error % tree']:.1f}%.")
+        f"{dense['A MdAPE %']:.1f}% in districts with 1,000+ training rows; their Task B tree error "
+        f"rate is {sparse_err:.1%} vs {dense['B error % tree']:.1f}%.")
 
     dec = errors_by(frame, "decile")
     lo, hi = dec.iloc[0], dec.iloc[-1]
@@ -726,15 +717,25 @@ def report_facts(meta, raw, df, X, names, price, split_ids, threshold):
     add("raw_rows_area_unparsed", counts["area_unparsed_raw"], "raw rows whose area does not parse")
     add("rows_clean", len(df), "listings after data_prep.clean")
     add("n_features", X.shape[1], "columns of the design matrix (after one-hot encoding)")
-    numeric = [n for n in names if n in df.columns]
+    # A feature named like a cleaned column is either numeric as cleaned, or a
+    # text column that make_features turned into a 0/1 presence flag.
+    same_name = [n for n in names if n in df.columns]
+    numeric = [n for n in same_name if pd.api.types.is_numeric_dtype(df[n])]
+    flags = [n for n in same_name if n not in numeric]
     add("n_numeric_features", len(numeric), "numeric features used as they are: " + ", ".join(numeric))
-    text_cols = [c for c in df.columns if c != "price" and not pd.api.types.is_numeric_dtype(df[c])]
+    add("n_flag_features", len(flags), "presence flags (1 = value present, 0 = missing): " + ", ".join(flags))
+    for flag in flags:
+        add(f"flag_share_{flag}", float(X[:, names.index(flag)].mean()), f"share of 1s in {flag}, all cleaned rows")
+    # Three flags restate a "yes" of another column; count the rows where they disagree.
+    for flag, column in (("repair", "Təmir"), ("bill_of_sale", "Çıxarış"), ("mortgage", "İpoteka")):
+        if flag in flags and column in df.columns:
+            add(f"flag_mismatch_{flag}", int((df[flag].notna() != (df[column] == "var")).sum()),
+                f"rows where {flag} present != ({column} == 'var')")
+    text_cols = [c for c in df.columns if c != "price" and c not in flags
+                 and not pd.api.types.is_numeric_dtype(df[c])]
     by_source = {c: sum(n.startswith(c + "_") for n in names) for c in text_cols}
     add("n_onehot_features", sum(by_source.values()), "one-hot columns: "
-        + ", ".join(f"{c} {k} (of {df[c].nunique()} values)" for c, k in by_source.items() if k))
-    no_column = [c for c, k in by_source.items() if k == 0]
-    add("text_columns_without_feature", len(no_column),
-        "text columns with one non-missing value, so drop_first leaves no column: " + ", ".join(no_column))
+        + ", ".join(f"{c} {k} (of {df[c].nunique()} values)" for c, k in by_source.items()))
     for split, ids in split_ids.items():
         add(f"premium_share_{split}", float(np.mean(price[ids] >= threshold)),
             f"share of premium listings in the {split} split (training-median threshold)")
@@ -819,7 +820,8 @@ def run_analysis(quick: bool = False) -> dict:
         raw = data_prep.load_raw(data_prep.DATA_PATH)
         df = data_prep.clean(raw)
         X, price, names = data_prep.make_features(df)
-    train_ids, val_ids, test_ids = rebuild_split(df, X, price)
+    split = get_splits(X, price)                  # the benchmark's split (src/splits.py)
+    train_ids, val_ids, test_ids = split.train, split.val, split.test
     if not np.array_equal(df.index[test_ids], preds["clean_index"]):
         raise RuntimeError("rebuilt split does not match test_predictions.csv; re-run the benchmark")
     print(f"Loaded benchmark outputs: {len(preds):,} test listings, threshold {threshold:,.0f} AZN, "

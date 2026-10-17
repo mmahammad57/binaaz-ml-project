@@ -2,14 +2,14 @@
 run_all.py — ONE command reproduces every headline number and figure.
 
 Run from the repo root:
-    python -m src.run_all            # full run (8.8 minutes measured on an Apple M4)
+    python -m src.run_all            # full run (9.1 minutes measured on an Apple M4)
     python -m src.run_all --quick    # smoke test on subsamples (about 70 seconds)
 
 Stages, in order (each receives --quick):
   1. EDA             src/eda.py           figures and summary of the training split
   2. SVM tuning      src/svm_tuning.py    train -> validation sweeps, writes the SVM configs
   3. tree tuning     src/tree_experiment.py run(quick), if it exists; otherwise the
-                     benchmark uses its fallback tree config (a warning is printed)
+                     benchmark uses the fixed tree configuration in benchmark.py
   4. benchmark       src/benchmark.py     CV + held-out test vs scikit-learn
   5. analysis        src/analysis.py      results tables, figures, error analysis
 
@@ -44,21 +44,21 @@ def _check_data():
 
 
 def _tree_tuning(quick):
-    """Call src/tree_experiment.py's run(quick) when it exists; warn otherwise."""
+    """Call src/tree_experiment.py's run(quick) when it exists; otherwise print which configuration is used."""
     fallback = benchmark.FALLBACK_CONFIGS
 
-    def warn(why):
-        print(f"WARNING: {why}. The benchmark will use the FALLBACK tree config "
-              f"(Task A {fallback['tree_task_a']}, Task B {fallback['tree_task_b']}) from "
-              "src/benchmark.py. Tuned values belong in results/tree_final_config.json.")
+    def note(why):
+        print(f"Note: {why}. The trees use the fixed configuration in src/benchmark.py "
+              f"(Task A {fallback['tree_task_a']}, Task B {fallback['tree_task_b']}); "
+              "a results/tree_final_config.json would override it.")
 
     if importlib.util.find_spec(f"{__package__}.tree_experiment") is None:
-        warn("src/tree_experiment.py not found")
+        note("src/tree_experiment.py not found")
         return
     module = importlib.import_module(f"{__package__}.tree_experiment")
     run = getattr(module, "run", None)
     if not callable(run):
-        warn("src/tree_experiment.py has no run(quick) function")
+        note("src/tree_experiment.py has no run(quick) function")
         return
     run(quick=quick)
 
