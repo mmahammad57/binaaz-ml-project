@@ -29,11 +29,13 @@ def run(quick: bool = False):
     os.makedirs(figures_dir, exist_ok=True)
     
     # 1. Load data
-    splits = get_splits()
-    X_train_full = splits["X_train"]
-    y_train_full = splits["y_train"] # price
-    X_val = splits["X_val"]
-    y_val_price = splits["y_val"]
+    df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
+    X, price, names = data_prep.make_features(df)
+    splits = get_splits(X, price)
+    X_train_full = X[splits.train]
+    y_train_full = price[splits.train] # price
+    X_val = X[splits.val]
+    y_val_price = price[splits.val]
     
     # 2. Make Task B labels (tier) using ONLY training median
     train_median = np.median(y_train_full)
