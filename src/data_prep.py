@@ -58,10 +58,6 @@ def load_raw(path: str = DATA_PATH):
     return df
 
 
-if __name__ == '__main__':
-    load_raw()
-
-
 def clean(df):
     """
     Clean the raw frame:
@@ -72,7 +68,42 @@ def clean(df):
       - drop LEAKAGE_COLUMNS.
     Return the cleaned DataFrame.
     """
-    raise NotImplementedError("TODO: clean the data")
+    df = df.copy()
+
+    # 1. Drop target leakage and unnecessary metadata columns
+    existing_drop_cols = [col for col in LEAKAGE_COLUMNS if col in df.columns]
+    df.drop(columns=existing_drop_cols, inplace=True)
+
+    # 2. Convert numeric columns arriving as formatted strings
+    numeric_columns = ['price', 'Sahə', 'Otaq sayı', 'Mərtəbə', 'Torpaq sahəsi', 'lat', 'lng', 'views']
+    for col in numeric_columns:
+        if col in df.columns:
+            # Force string cleanup (replace m², spaces, commas) then convert to float
+            s = df[col].astype(str).str.replace('m²', '', regex=False)
+            s = s.str.replace(' ', '', regex=False).str.replace(',', '.', regex=False)
+            df[col] = pd.to_numeric(s, errors='coerce')
+
+    # 3. Handle missing values & remove exact duplicates
+    df.dropna(subset=['price', 'Sahə', 'Otaq sayı'], inplace=True)
+    df.drop_duplicates(inplace=True)
+
+    # Fill remaining categorical missing values
+    categorical_cols = ['location', 'city', 'Binanın növü', 'Kateqoriya', 'Təmir', 'Çıxarış', 'İpoteka']
+    for col in categorical_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown').astype(str).str.strip()
+
+    # 4. Outlier handling based on realistic real-estate price and area ranges
+    df = df[(df['price'] >= 10000) & (df['price'] <= 5000000)]
+    df = df[(df['Sahə'] >= 10) & (df['Sahə'] <= 2000)]
+
+    print(f"[Data Prep] Cleaning completed. Cleaned shape: {df.shape}")
+    return df
+
+
+if __name__ == '__main__':
+    raw_df = load_raw()
+    cleaned_df = clean(raw_df)
 
 
 def make_features(df):
