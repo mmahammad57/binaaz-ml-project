@@ -53,7 +53,13 @@ LEAKAGE_COLUMNS: list[str] = [
 
 def load_raw(path: str = DATA_PATH):
     """Read the raw CSV into a DataFrame (keep UTF-8). Return it unmodified."""
-    raise NotImplementedError("TODO: load the raw CSV")
+    df = pd.read_csv(path, low_memory=False)
+    print(f"[Data Prep] Loaded raw dataset from {path}. Shape: {df.shape}")
+    return df
+
+
+if __name__ == '__main__':
+    load_raw()
 
 
 def clean(df):
