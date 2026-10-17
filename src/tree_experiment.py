@@ -75,3 +75,158 @@ if __name__ == "__main__":
     import sys
     quick_mode = "--quick" in sys.argv
     run(quick=quick_mode)
+    
+    results_table = []
+    
+    # --- TASK B: Classification (Price Tier) ---
+    print("\nStarting Task B (Classification) sweep...")
+    best_b_val = -1.0
+    best_b_config = None
+    task_b_curves = {"gini": {"train": [], "val": []}, "entropy": {"train": [], "val": []}}
+    depths = [2, 4, 6, 8, 10, 12]
+    
+    for crit in ["gini", "entropy"]:
+        for d in depths:
+            start_t = time.time()
+            tree = DecisionTree(task="classification", criterion=crit, max_depth=d, min_samples_split=10, min_samples_leaf=1)
+            tree.fit(X_train, y_train_tier)
+            fit_time = time.time() - start_t
+            
+            tr_preds = tree.predict(X_train)
+            val_preds = tree.predict(X_val)
+            
+            _, _, tr_f1 = precision_recall_f1(y_train_tier, tr_preds)
+            _, _, val_f1 = precision_recall_f1(y_val_tier, val_preds)
+            
+            task_b_curves[crit]["train"].append(tr_f1)
+            task_b_curves[crit]["val"].append(val_f1)
+            
+            results_table.append({
+                "Task": "B_Classification", "Criterion": crit, "Max_Depth": d, "Min_Samples_Leaf": 1,
+                "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
+            })
+            
+            # Selection rule: best validation F1, if within 0.002 pick simpler (smaller depth)
+            if best_b_config is None or val_f1 > best_b_val + 0.002:
+                best_b_val = val_f1
+                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
+            elif abs(val_f1 - best_b_val) <= 0.002 and d < best_b_config["max_depth"]:
+                best_b_val = val_f1
+                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
+
+    print(f"Best Task B base config: {best_b_config}. Sweeping min_samples_leaf...")
+    for msl in [5, 20, 50]:
+        start_t = time.time()
+        tree = DecisionTree(task="classification", criterion=best_b_config["criterion"], 
+                            max_depth=best_b_config["max_depth"], min_samples_split=10, min_samples_leaf=msl)
+        tree.fit(X_train, y_train_tier)
+        fit_time = time.time() - start_t
+        
+        tr_preds = tree.predict(X_train)
+        val_preds = tree.predict(X_val)
+        _, _, tr_f1 = precision_recall_f1(y_train_tier, tr_preds)
+        _, _, val_f1 = precision_recall_f1(y_val_tier, val_preds)
+        
+        results_table.append({
+            "Task": "B_Classification", "Criterion": best_b_config["criterion"], 
+            "Max_Depth": best_b_config["max_depth"], "Min_Samples_Leaf": msl,
+            "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
+        })
+        
+        if val_f1 > best_b_val + 0.002:
+            best_b_val = val_f1
+            best_b_config["min_samples_leaf"] = msl
+        elif abs(val_f1 - best_b_val) <= 0.002 and msl > best_b_config["min_samples_leaf"]:
+            best_b_val = val_f1
+            best_b_config["min_samples_leaf"] = msl
+
+    # --- TASK A: Regression (Log Price) ---
+    print("\nStarting Task A (Regression) sweep...")
+    best_a_val = float('inf')
+    best_a_config = None
+    task_a_curves = {"train": [], "val": []}
+    
+    for d in depths:
+        start_t = time.time()
+        tree = DecisionTree(task="regression", criterion="mse", max_depth=d, min_samples_split=10, min_samples_leaf=1)
+        tree.fit(X_train, y_train_log)
+        fit_time = time.time() - start_t
+        
+        tr_preds = tree.predict(X_train)
+        val_preds = tree.predict(X_val)
+        
+        tr_rmse = rmse(y_train_log, tr_preds)
+        val_rmse = rmse(y_val_log, val_preds)
+        
+        task_a_curves["train"].append(tr_rmse)
+        task_a_curves["val"].append(val_rmse)
+        
+        results_table.append({
+            "Task": "A_Regression", "Criterion": "mse", "Max_Depth": d, "Min_Samples_Leaf": 1,
+            "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
+        })
+        
+        if best_a_config is None or val_rmse < best_a_val - 0.002:
+            best_a_val = val_rmse
+            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
+        elif abs(val_rmse - best_a_val) <= 0.002 and d < best_a_config["max_depth"]:
+            best_a_val = val_rmse
+            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
+
+    print(f"Best Task A base config: {best_a_config}. Sweeping min_samples_leaf...")
+    for msl in [5, 20, 50]:
+        start_t = time.time()
+        tree = DecisionTree(task="regression", criterion="mse", 
+                            max_depth=best_a_config["max_depth"], min_samples_split=10, min_samples_leaf=msl)
+        tree.fit(X_train, y_train_log)
+        fit_time = time.time() - start_t
+        
+        tr_preds = tree.predict(X_train)
+        val_preds = tree.predict(X_val)
+        tr_rmse = rmse(y_train_log, tr_preds)
+        val_rmse = rmse(y_val_log, val_preds)
+        
+        results_table.append({
+            "Task": "A_Regression", "Criterion": "mse", 
+            "Max_Depth": best_a_config["max_depth"], "Min_Samples_Leaf": msl,
+            "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
+        })
+        
+        if val_rmse < best_a_val - 0.002:
+            best_a_val = val_rmse
+            best_a_config["min_samples_leaf"] = msl
+        elif abs(val_rmse - best_a_val) <= 0.002 and msl > best_a_config["min_samples_leaf"]:
+            best_a_val = val_rmse
+            best_a_config["min_samples_leaf"] = msl
+
+    # --- OUTPUTS (JSON/CSV) ---
+    print("\n--- Final Selected Configurations ---")
+    selection_rule = "Selection rule: best validation metric. If within 0.002, choose smaller max_depth, then larger min_samples_leaf."
+    print(selection_rule)
+    
+    df_results = pd.DataFrame(results_table)
+    df_results.to_csv(os.path.join(results_dir, "tree_sweep_table.csv"), index=False)
+    
+    final_config = {
+        "config": {
+            "tree_task_a": {
+                "max_depth": best_a_config["max_depth"],
+                "min_samples_split": 10,
+                "min_samples_leaf": best_a_config["min_samples_leaf"]
+            },
+            "tree_task_b": {
+                "max_depth": best_b_config["max_depth"],
+                "min_samples_split": 10,
+                "min_samples_leaf": best_b_config["min_samples_leaf"]
+            }
+        }
+    }
+    with open(os.path.join(results_dir, "tree_final_config.json"), 'w') as f:
+        json.dump(final_config, f, indent=4)
+        
+    selection_info = {
+        "task_b_criterion": best_b_config["criterion"],
+        "selection_rule": selection_rule
+    }
+    with open(os.path.join(results_dir, "tree_selection.json"), 'w') as f:
+        json.dump(selection_info, f, indent=4)
