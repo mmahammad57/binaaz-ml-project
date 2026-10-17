@@ -109,6 +109,44 @@ def roc_auc(y_true, scores) -> float:
     return float(u / (n_pos * n_neg))
 
 
+# --- Tree diagnostics -------------------------------------------------------
+def tree_feature_importances(tree, n_features: int) -> np.ndarray:
+    """
+    Feature importances of a fitted DecisionTree, as an array of length
+    n_features that sums to 1 (all zeros if the tree is a single leaf).
+    """
+    root = tree.root
+    if root is None:
+        raise ValueError("fit the tree before computing feature importances")
+    if getattr(root, "n_samples", None) is None or getattr(root, "impurity", None) is None:
+        raise AttributeError(
+            "tree nodes must record n_samples and impurity "
+            "(the DecisionTree update on the decision-tree branch adds them)"
+        )
+
+    # Mean decrease in impurity (MDI), the definition sklearn uses for
+    # feature_importances_. Each split removes
+    #     n_node * impurity_node - (n_left * impurity_left + n_right * impurity_right)
+    # of sample-weighted impurity; that amount is credited to the feature the
+    # node splits on. sklearn also divides by the root's sample count, but that
+    # cancels out in the final normalisation, so it is skipped here.
+    importances = np.zeros(n_features)
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.is_leaf():
+            continue
+        left, right = node.left, node.right
+        importances[node.feature] += (
+            node.n_samples * node.impurity
+            - (left.n_samples * left.impurity + right.n_samples * right.impurity)
+        )
+        stack.extend((left, right))
+
+    total = importances.sum()
+    return importances / total if total > 0 else importances
+
+
 # --- Comparison helper ------------------------------------------------------
 def _format_value(value, decimals, pm=" ± "):
     """Format a float, or a (mean, std) pair as 'mean ± std'."""

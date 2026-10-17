@@ -9,9 +9,11 @@ import numpy as np
 import pytest
 from sklearn import metrics as skm
 from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from src import evaluate as ev
 from src.data_prep import SEED
+from src.decision_tree import DecisionTree
 
 
 @pytest.fixture
@@ -127,6 +129,74 @@ def test_roc_auc_single_class_returns_nan_like_sklearn(y_true):
         assert np.isnan(ev.roc_auc(y_true, scores))
     with pytest.warns(UndefinedMetricWarning):
         assert np.isnan(skm.roc_auc_score(y_true, scores))
+
+
+# --- Tree feature importances -----------------------------------------------
+# Small hand-fixed datasets on which our tree and sklearn's grow identical
+# trees, with every split winning by a clear margin (no ties for either
+# implementation to break differently). Importance lands on two features,
+# and one feature gets exactly zero.
+X_CLF = np.array([[3, 9, 6], [1, 4, 4], [10, 6, 2], [11, 12, 12], [12, 5, 3], [8, 8, 7],
+                  [6, 7, 10], [7, 2, 8], [4, 10, 5], [5, 3, 11], [9, 11, 1], [2, 1, 9]], float)
+Y_CLF = np.array([1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0])
+X_REG = np.array([[3, 4, 2], [1, 10, 5], [8, 5, 4], [7, 6, 3], [10, 7, 8],
+                  [6, 9, 7], [4, 8, 1], [5, 2, 6], [9, 3, 10], [2, 1, 9]], float)
+Y_REG = np.array([3.6, 8.1, 14.2, 15.0, 15.1, 17.6, 7.4, 0.8, 11.5, 0.0])
+
+MATCHED_TREES = [
+    pytest.param(DecisionTree("classification", "gini", max_depth=3),
+                 DecisionTreeClassifier(criterion="gini", max_depth=3, random_state=SEED),
+                 X_CLF, Y_CLF, id="gini"),
+    pytest.param(DecisionTree("classification", "entropy", max_depth=3),
+                 DecisionTreeClassifier(criterion="entropy", max_depth=3, random_state=SEED),
+                 X_CLF, Y_CLF, id="entropy"),
+    pytest.param(DecisionTree("regression", "mse", max_depth=2),
+                 DecisionTreeRegressor(criterion="squared_error", max_depth=2, random_state=SEED),
+                 X_REG, Y_REG, id="mse"),
+]
+
+
+def _preorder(node):
+    """(split feature, n_samples) per node, depth-first, left before right; -2 marks a leaf."""
+    if node.is_leaf():
+        return [(-2, node.n_samples)]
+    return [(node.feature, node.n_samples)] + _preorder(node.left) + _preorder(node.right)
+
+
+@pytest.mark.parametrize("ours, theirs, X, y", MATCHED_TREES)
+def test_tree_feature_importances_match_sklearn(ours, theirs, X, y):
+    ours.fit(X, y)
+    theirs.fit(X, y)
+
+    # Precondition: identical splits. sklearn numbers its nodes in the same
+    # depth-first order, with -2 as the leaf feature, so the lists line up.
+    sk = theirs.tree_
+    assert _preorder(ours.root) == list(zip(sk.feature.tolist(), sk.n_node_samples.tolist()))
+
+    importances = ev.tree_feature_importances(ours, X.shape[1])
+    np.testing.assert_allclose(importances, theirs.feature_importances_, rtol=0, atol=1e-9)
+    assert (importances > 0).sum() == 2
+
+
+@pytest.mark.parametrize("task, criterion", [("classification", "gini"),
+                                             ("classification", "entropy"),
+                                             ("regression", "mse")])
+def test_tree_feature_importances_are_a_distribution(rng, task, criterion):
+    X = rng.normal(size=(300, 6))
+    signal = X[:, 0] + 0.5 * X[:, 1] * X[:, 2]
+    y = (signal > 0).astype(int) if task == "classification" else signal
+    tree = DecisionTree(task, criterion, max_depth=5).fit(X, y)
+
+    importances = ev.tree_feature_importances(tree, X.shape[1])
+    assert importances.shape == (6,)
+    assert np.all(importances >= 0)
+    assert importances.sum() == pytest.approx(1.0)
+
+
+def test_tree_feature_importances_single_leaf_is_all_zero():
+    tree = DecisionTree("classification", "gini").fit(X_CLF, np.ones(len(X_CLF), int))
+    assert tree.root.is_leaf()
+    np.testing.assert_array_equal(ev.tree_feature_importances(tree, 3), np.zeros(3))
 
 
 # --- Comparison table -------------------------------------------------------
