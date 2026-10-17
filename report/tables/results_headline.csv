@@ -1,0 +1,13 @@
+model,A RMSE (log),A R2 (log),"A R2 (log), CV",A R2 (AZN),B F1,"B F1, CV",B ROC-AUC
+Tree (ours),0.244,0.847,0.829 ± 0.006,0.756,n/a,n/a,n/a
+Tree (sklearn),0.244,0.846,0.831 ± 0.006,0.749,n/a,n/a,n/a
+Tree gini (ours),n/a,n/a,n/a,n/a,0.921,0.911 ± 0.003,0.970
+Tree gini (sklearn),n/a,n/a,n/a,n/a,0.921,0.910 ± 0.003,0.970
+Tree entropy (ours),n/a,n/a,n/a,n/a,0.918,0.910 ± 0.003,0.974
+Tree entropy (sklearn),n/a,n/a,n/a,n/a,0.918,0.910 ± 0.003,0.975
+Pegasos linear (ours),n/a,n/a,n/a,n/a,0.899,0.900 ± 0.003,0.960
+SGD hinge linear (sklearn),n/a,n/a,n/a,n/a,0.898,0.896 ± 0.004,0.961
+"SVC linear (sklearn, max 10k rows)",n/a,n/a,n/a,n/a,0.897,0.902 ± 0.003,0.959
+Pegasos RFF (ours),n/a,n/a,n/a,n/a,0.895,0.879 ± 0.010,0.961
+SGD hinge RFF (sklearn),n/a,n/a,n/a,n/a,0.892,0.885 ± 0.006,0.959
+"SVC RBF (sklearn, max 10k rows)",n/a,n/a,n/a,n/a,0.898,0.905 ± 0.005,0.963

@@ -569,58 +569,59 @@ def scaling(X_tr, price_tr, names, sizes):
 def _plot_scaling(table, slopes, stem):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
-    from matplotlib.ticker import FixedLocator, NullLocator
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
     # Categorical slots 1-4 of the dataviz reference palette, in fixed order
     # (column order: our tree, sklearn tree, our SVM, sklearn SGD).
-    # Ours = solid, sklearn = dashed, plus distinct markers and direct labels,
-    # so identity never rests on colour alone.
-    looks = (("#2a78d6", "-", "o"), ("#eb6834", "--", "s"),
-             ("#1baf7a", "-", "^"), ("#eda100", "--", "D"))
+    # Ours = solid, sklearn = dashed, plus distinct markers, so identity never
+    # rests on colour alone. Short legend names fit the one-column width.
+    looks = (("#2a78d6", "-", "o", "Our tree"), ("#eb6834", "--", "s", "sklearn tree"),
+             ("#1baf7a", "-", "^", "Pegasos"), ("#eda100", "--", "D", "SGD"))
     style = dict(zip(table.columns, looks, strict=True))
     ink, muted, grid = "#1f1f1f", "#5f5f5f", "#e3e3e3"
     sizes = table.index.to_numpy()
 
-    fig = Figure(figsize=(7.5, 4.6))
+    # Drawn at its printed size (one report column, 3.5 in) with 8.5-9 pt
+    # fonts; constrained layout keeps everything inside the 3.5 x 2.8 in.
+    fig = Figure(figsize=(3.5, 2.8), layout="constrained")
     FigureCanvasAgg(fig)
     ax = fig.subplots()
-    for name, (color, dash, marker) in style.items():
-        ax.plot(sizes, table[name], color=color, linestyle=dash, linewidth=2,
-                marker=marker, markersize=7, label=f"{name}  (slope {slopes[name]:.2f})")
-
-    # Direct labels at the right end, nudged apart in log space so they never overlap.
-    ends = sorted((np.log10(table[name].iloc[-1]), name) for name in style)
-    placed = []
-    for y, name in ends:
-        if placed and y - placed[-1][0] < 0.13:
-            y = placed[-1][0] + 0.13
-        placed.append((y, name))
-    for y, name in placed:
-        ax.annotate(name, xy=(sizes[-1], table[name].iloc[-1]), xytext=(sizes[-1] * 1.12, 10 ** y),
-                    va="center", fontsize=9, color=ink)
-
-    ax.set(xscale="log", yscale="log", xlim=(sizes[0] / 1.25, sizes[-1] * 3.2),
-           xlabel="Training rows (log scale)", ylabel="Fit time, seconds (log scale)")
+    for name, (color, dash, marker, short) in style.items():
+        ax.plot(sizes, table[name], color=color, linestyle=dash, linewidth=1.5,
+                marker=marker, markersize=4, label=f"{short}, slope {slopes[name]:.2f}")
+    ax.set(xscale="log", yscale="log", xlim=(sizes[0] / 1.25, sizes[-1] * 1.25))
+    ax.set_xlabel("Training rows (log scale)", color=ink, fontsize=9)
+    ax.set_ylabel("Fit time, s (log scale)", color=ink, fontsize=9)
     ax.xaxis.set_major_locator(FixedLocator(sizes))
     ax.xaxis.set_minor_locator(NullLocator())
     ax.set_xticklabels([f"{n // 1000}k" for n in sizes])
+    # Plain numbers (0.01, 0.1, 1, 10) instead of 10^k: the exponent of a
+    # mathtext label would print below 8 pt.
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.grid(True, which="major", color=grid, linewidth=0.6)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(muted)
-    ax.tick_params(colors=muted, labelsize=9)
-    ax.xaxis.label.set_color(ink)
-    ax.yaxis.label.set_color(ink)
-    ax.legend(loc="upper left", frameon=False, fontsize=8.5, labelcolor=ink)
-    ax.set_title("Fit time vs training size (Task B, one fit per point)", fontsize=11,
-                 color=ink, loc="left")
-    fig.tight_layout()
+    ax.tick_params(colors=muted, labelsize=8.5)
+    fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8.5, labelcolor=ink,
+               handlelength=1.4, columnspacing=0.8)
     paths = []
     for ext in ("png", "pdf"):
         path = stem.with_suffix(f".{ext}")
-        fig.savefig(path, dpi=200, facecolor="white", bbox_inches="tight")
+        fig.savefig(path, dpi=300, facecolor="white")
         paths.append(path)
+    return paths
+
+
+def replot_scaling(quick: bool = False):
+    """Redraw the scaling figure from the saved CSV and slopes, without refitting."""
+    results_dir = ROOT / ("results/quick" if quick else "results")
+    figures_dir = results_dir if quick else ROOT / "report/figures"
+    table = pd.read_csv(results_dir / "benchmark_scaling.csv", index_col="n_train")
+    slopes = json.loads((results_dir / "benchmark_meta.json").read_text(encoding="utf-8"))["scaling_slopes"]
+    paths = _plot_scaling(table, slopes, figures_dir / "benchmark_scaling")
+    print("Wrote " + ", ".join(str(p.relative_to(ROOT)) for p in paths))
     return paths
 
 
@@ -756,4 +757,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark our models against scikit-learn.")
     parser.add_argument("--quick", action="store_true",
                         help="smoke test: 5k-row CV with 3 folds and 5k-row test-stage fits")
-    run_benchmark(parser.parse_args().quick)
+    parser.add_argument("--figures-only", action="store_true",
+                        help="only redraw the scaling figure from the saved results")
+    args = parser.parse_args()
+    if args.figures_only:
+        replot_scaling(args.quick)
+    else:
+        run_benchmark(args.quick)

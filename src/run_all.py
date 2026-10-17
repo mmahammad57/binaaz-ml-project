@@ -3,14 +3,15 @@ run_all.py — ONE command reproduces every headline number and figure.
 
 Run from the repo root:
     python -m src.run_all            # full run (8.8 minutes measured on an Apple M4)
-    python -m src.run_all --quick    # smoke test on subsamples (about 65 seconds)
+    python -m src.run_all --quick    # smoke test on subsamples (about 70 seconds)
 
 Stages, in order (each receives --quick):
-  1. SVM tuning      src/svm_tuning.py    train -> validation sweeps, writes the SVM configs
-  2. tree tuning     src/tree_experiment.py run(quick), if it exists; otherwise the
+  1. EDA             src/eda.py           figures and summary of the training split
+  2. SVM tuning      src/svm_tuning.py    train -> validation sweeps, writes the SVM configs
+  3. tree tuning     src/tree_experiment.py run(quick), if it exists; otherwise the
                      benchmark uses its fallback tree config (a warning is printed)
-  3. benchmark       src/benchmark.py     CV + held-out test vs scikit-learn
-  4. analysis        src/analysis.py      results table, figures, error analysis
+  4. benchmark       src/benchmark.py     CV + held-out test vs scikit-learn
+  5. analysis        src/analysis.py      results tables, figures, error analysis
 
 All randomness is seeded with data_prep.SEED inside each stage. A full run
 writes to results/, report/figures/ and report/tables/; --quick writes under
@@ -25,7 +26,7 @@ import importlib.util
 import time
 from pathlib import Path
 
-from . import analysis, benchmark, data_prep, svm_tuning
+from . import analysis, benchmark, data_prep, eda, svm_tuning
 from . import evaluate as ev
 from .data_prep import SEED
 
@@ -92,10 +93,11 @@ def main(quick: bool = False) -> None:
     print(f"run_all ({'QUICK' if quick else 'FULL'}), SEED={SEED}, data={data_prep.DATA_PATH}")
 
     stages = [
-        ("1. SVM tuning", lambda: svm_tuning.run_tuning(quick)),
-        ("2. tree tuning", lambda: _tree_tuning(quick)),
-        ("3. benchmark", lambda: benchmark.run_benchmark(quick)),
-        ("4. analysis", lambda: analysis.run_analysis(quick)),
+        ("1. EDA", lambda: eda.run_eda(quick)),
+        ("2. SVM tuning", lambda: svm_tuning.run_tuning(quick)),
+        ("3. tree tuning", lambda: _tree_tuning(quick)),
+        ("4. benchmark", lambda: benchmark.run_benchmark(quick)),
+        ("5. analysis", lambda: analysis.run_analysis(quick)),
     ]
     outputs, seconds = {}, {}
     for name, stage in stages:
@@ -104,7 +106,7 @@ def main(quick: bool = False) -> None:
         outputs[name] = stage()
         seconds[name] = time.perf_counter() - start
 
-    bench = outputs["3. benchmark"]
+    bench = outputs["4. benchmark"]
     print(f"\n{'=' * 78}\nSUMMARY ({'QUICK' if quick else 'FULL'} run)\n{'=' * 78}")
     _headline(bench)
 

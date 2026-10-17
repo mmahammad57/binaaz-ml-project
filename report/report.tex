@@ -1,25 +1,25 @@
 % =====================================================================
-%  IEEE-STYLE CONFERENCE REPORT TEMPLATE  (self-contained)
-%  MLE-AI-201 Machine Learning -- Final Project
+%  MLE-AI-201 Machine Learning -- Final Project report
+%  IEEE-style two-column layout using standard LaTeX packages only.
 %
-%  This template MIMICS the IEEE two-column conference look using only
-%  standard LaTeX packages. It does NOT depend on IEEEtran.cls, so it
-%  compiles anywhere (tectonic, pdflatex, Overleaf) with nothing extra.
+%  Build:   tectonic report.tex      (from report/)
 %
-%  Build:   tectonic report.tex      (recommended)
-%     or:   pdflatex report.tex ; pdflatex report.tex
+%  Numbers come from the files written by `python -m src.run_all`; each is
+%  followed by a "% src:" comment naming the file and the row/column (or key)
+%  it was taken from. Claims about a method are followed by a
+%  "% src: file.py:function" comment naming the code that implements it.
 % =====================================================================
 \documentclass[10pt,twocolumn,a4paper]{article}
 
 % ---- Geometry: IEEE-like margins / two narrow columns ----------------
 \usepackage[a4paper,top=0.75in,bottom=1.0in,left=0.68in,right=0.68in,columnsep=0.25in]{geometry}
 
-% ---- Times-like font (standard, ships with every TeX distro) ---------
-\usepackage{mathptmx}          % Times text + math
+% ---- Times-like font ---------------------------------------------------
+\usepackage{mathptmx}
 \usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}    % allows accented / Azerbaijani chars
+\usepackage[utf8]{inputenc}
 
-% ---- Common, dependency-free packages --------------------------------
+% ---- Packages --------------------------------------------------------
 \usepackage{graphicx}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
@@ -51,25 +51,42 @@
 \twocolumn[
   \begin{@twocolumnfalse}
   \begin{center}
-    {\LARGE\bfseries Your Project Title Here:\\A Clear, Specific Subtitle\par}
+    {\LARGE\bfseries Pricing Baku Real Estate from Scratch:\\Decision Trees and Pegasos SVMs on bina.az Listings\par}
     \vspace{1.2em}
     % Authors: Surname, Given name --- alphabetical by surname.
     {\large
-      Aliyeva, Aysel\quad Mammadov, Murad\quad Rustamli, Rustam\par}
+      Aghazade, Ibrahim\quad Aliyev, Sahib\quad Mammadli, Mahammad\quad Sakhrayev, Khizri\par}
     \vspace{0.5em}
     {\itshape MLE-AI-201 Machine Learning, AI Academy --- Cohort II\par}
     \vspace{1.4em}
   \end{center}
   \begin{quote}
     \small
-    \abstractkw{Abstract---}% IEEE uses an em-dash after "Abstract"
-    One paragraph, roughly 150--250 words. State the problem (price
-    prediction and the derived price-tier task on the bina.az dataset),
-    what you built from scratch (a decision tree and an SVM), the key
-    result (headline metrics vs.\ scikit-learn), and the main takeaway.
-    Write it last. \textbf{End the abstract with your repository link},
-    per IEEE convention:
-    \href{https://github.com/your-team/your-repo}{\texttt{github.com/your-team/your-repo}}
+    \abstractkw{Abstract---}%
+    We predict the prices of real-estate listings scraped from bina.az, using
+    91{,}314 cleaned sale listings. % src: results/report_facts.csv [rows_clean]
+    Task~A regresses the logarithm of the price; Task~B classifies each
+    listing as premium or standard, split at the median training price of
+    215{,}000~AZN. % src: results/report_facts.csv [tier_threshold_train_median]
+    We implemented two models from scratch in NumPy: a CART-style decision
+    tree with Gini, entropy and MSE criteria, and a Pegasos sub-gradient
+    support-vector machine, either linear or on random Fourier features that
+    approximate an RBF kernel. Both are benchmarked against matched
+    scikit-learn models on identical splits, with 5-fold cross-validation, a
+    held-out test set and timing. On the test set our regression tree
+    reaches $R^2 = 0.847$ on log price, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8470]
+    against 0.846 for scikit-learn. % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8463]
+    Our Gini tree reaches F1 0.921 and ROC-AUC 0.970, % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9211, ROC-AUC 0.9697]
+    and our linear Pegasos SVM, chosen on validation over the Fourier-feature
+    variant, reaches F1 0.899. % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.8987]
+    Each of our models is within 0.003 F1 of its matched scikit-learn % src: results/error_analysis.md [Findings, bullet 1]
+    baseline, and our trees are nearly identical to scikit-learn's, but they
+    fit about 316 times more slowly. % src: 85.2695 / 0.2696 from results/benchmark_test_task_b.csv [Fit s, Tree gini (ours) / (sklearn)]
+    Errors concentrate near the tier threshold, at both price extremes and
+    in districts with little training data. The main takeaway: careful
+    from-scratch implementations reach library accuracy on this data; what
+    they lose is speed. Code:
+    \href{https://github.com/mmahammad57/binaaz-ml-project}{\texttt{github.com/mmahammad57/binaaz-ml-project}}
     (tag \texttt{v1.0-final}).
 
     \vspace{0.6em}
@@ -82,102 +99,800 @@
 
 % =====================================================================
 \section{Introduction}
-Motivate the problem and state your contributions as a short bulleted or
-inline list. What is the task, why does it matter, and what did your
-team do? Keep background brief; cite sources like this~\cite{pegasos}.
+Listing prices on bina.az, a property portal for Azerbaijan, are set by
+sellers and agents. A model
+that predicts a listing's price from its size, type and location helps
+both sides judge whether an asking price is reasonable. We study two tasks
+on the same listings. \emph{Task~A} is regression of $\log(\text{price})$.
+\emph{Task~B} is classification of a derived \emph{price tier}: premium
+if the price is at least the median training price, standard otherwise.
 
-\section{Related Work / Background}
-Briefly place your work in context: decision trees (impurity, information
-gain), the soft-margin SVM and the hinge-loss primal, and the Pegasos
-sub-gradient solver you used~\cite{pegasos}. One or two short paragraphs.
+Our contributions are:
+\begin{itemize}
+  \item a decision tree written from scratch in NumPy, for regression (MSE)
+  and classification (Gini or entropy), with the usual stopping rules and
+  impurity-based feature importances;
+  \item a Pegasos support-vector machine written from scratch, linear or on
+  random Fourier features (RFF) for a non-linear decision boundary;
+  \item a benchmark of both against matched scikit-learn
+  models~\cite{sklearn} on identical data: cross-validation, a held-out
+  test set, timing and a scaling study;
+  \item an error analysis by price range, district, category and distance
+  from the tier threshold;
+  \item a reproducible pipeline: one command regenerates every number,
+  table and figure in this report.
+\end{itemize}
 
+% =====================================================================
+\section{Background}
+\label{sec:background}
+\subsection{Decision trees}
+A CART tree~\cite{cart} splits a node $S$ on one feature $j$ and a
+threshold $t$ into $S_L = \{x \in S : x_j \le t\}$ and
+$S_R = S \setminus S_L$, choosing the split that most reduces an impurity
+$I$. For classes $k$ with proportions $p_k$ in $S$, and for a regression
+target $y$ with mean $\bar{y}_S$,
+\begin{gather}
+  I_{\text{Gini}}(S) = 1 - \textstyle\sum_k p_k^2, \qquad
+  I_{\text{ent}}(S) = -\textstyle\sum_k p_k \log_2 p_k, \label{eq:imp}\\
+  I_{\text{MSE}}(S) = \tfrac{1}{|S|}\textstyle\sum_{i \in S} (y_i - \bar{y}_S)^2 .\notag
+\end{gather}
+The impurity decrease, called information gain for entropy, is
+\begin{equation}
+  \Delta(S, j, t) = I(S) - \tfrac{|S_L|}{|S|} I(S_L) - \tfrac{|S_R|}{|S|} I(S_R).
+  \label{eq:gain}
+\end{equation}
+Splitting is repeated on each child until a stopping rule holds; a leaf
+predicts the class proportions or the mean target of its rows.
+
+\subsection{Support-vector machines and Pegasos}
+The soft-margin SVM~\cite{cortes} with labels $y_i \in \{-1, +1\}$
+minimises $\tfrac{1}{2}\lVert\mathbf{w}\rVert^2 + C\sum_i \xi_i$ subject
+to $y_i(\mathbf{w}^\top\mathbf{x}_i + b) \ge 1 - \xi_i$, $\xi_i \ge 0$.
+Eliminating the slacks gives the hinge-loss primal
+\begin{equation}
+  J(\mathbf{w},b)=\tfrac{\lambda}{2}\lVert\mathbf{w}\rVert^{2}
+  +\tfrac{1}{n}\sum_{i=1}^{n}\max\!\big(0,\,1-y_i(\mathbf{w}^{\top}\mathbf{x}_i+b)\big),
+  \label{eq:svm}
+\end{equation}
+which has the same minimiser as the constrained form when
+$\lambda = 1/(nC)$. Pegasos~\cite{pegasos} minimises~(\ref{eq:svm}) by
+stochastic sub-gradient steps. At step $t$ it draws an example $i$, sets
+$\eta_t = 1/(\lambda t)$ and updates
+\begin{equation}
+  \mathbf{w} \leftarrow (1 - \eta_t\lambda)\,\mathbf{w}
+  + \eta_t\,\mathbf{1}\!\left[y_i\mathbf{w}^\top\mathbf{x}_i < 1\right] y_i\mathbf{x}_i ,
+  \label{eq:pegasos}
+\end{equation}
+optionally followed by a projection of $\mathbf{w}$ onto the ball of
+radius $1/\sqrt{\lambda}$. After $T$ steps its error in the objective
+shrinks like $1/(\lambda T)$, so small $\lambda$ needs many steps.
+
+\subsection{Random Fourier features}
+A kernel SVM replaces $\mathbf{x}_i^\top\mathbf{x}_j$ by a kernel such as
+the RBF $k(\mathbf{x},\mathbf{x}') = \exp(-\gamma\lVert\mathbf{x}-\mathbf{x}'\rVert^2)$,
+whose $n \times n$ Gram matrix is too large for our data.
+Rahimi and Recht~\cite{rahimi} approximate it with an explicit map
+$\mathbf{z}(\mathbf{x}) = \sqrt{2/D}\,\cos(W^\top\mathbf{x} + \mathbf{a})$,
+with $W_{jk} \sim \mathcal{N}(0, 2\gamma)$ and
+$a_k \sim \mathcal{U}[0, 2\pi)$, so that
+$\mathbb{E}[\mathbf{z}(\mathbf{x})^\top\mathbf{z}(\mathbf{x}')] = k(\mathbf{x},\mathbf{x}')$.
+A linear SVM on $\mathbf{z}(\mathbf{x})$ then approximates the RBF-kernel SVM.
+
+% =====================================================================
 \section{Data and Preprocessing}
-Describe the bina.az dataset: size, key columns, and the cleaning you
-did (currency, types, missing values, duplicates, outliers). State the
-two tasks (price regression; price-tier classification), how you derived
-the tier label, and your train/validation/test split. \textbf{Name the
-leakage columns you removed and why.}
+\label{sec:data}
+The data is the Kaggle bina.az sale collection~\cite{kaggle}: one CSV of
+100{,}775 listings % src: results/report_facts.csv [raw_rows]
+and 51 columns. % src: results/report_facts.csv [raw_columns]
+All preprocessing is in \texttt{data\_prep.py} (Table~\ref{tab:data}).
+
+{\raggedright\textit{Columns removed.} The pipeline drops 30 columns % src: results/report_facts.csv [dropped_columns]
+listed in \texttt{LEAKAGE\_COLUMNS}. % src: data_prep.py:LEAKAGE_COLUMNS, data_prep.py:clean (step 1)
+Only two are derived from the target: \texttt{unit\_price}, the price per
+m\textsuperscript{2}, and \texttt{total\_price}, which repeats the price;
+either would give the answer away. The others carry no information about
+the property or would identify listings and sellers: identifiers and URLs
+(\texttt{id\_x}, \texttt{id\_y}, \texttt{estate\_id},
+\texttt{estate\_details\_id\_x/\_y}, \texttt{rel\_url},
+\texttt{estate\_rel\_url}, \texttt{estate\_rel\_url\_x/\_y},
+\texttt{img\_url}); scrape and update times (\texttt{datetime\_scrape\_x/\_y},
+\texttt{day\_x/\_y}, \texttt{hour\_x/\_y}, \texttt{updated},
+\texttt{city\_when}); seller names (\texttt{owner\_name},
+\texttt{owner\_title}, \texttt{shop\_name}, \texttt{shop\_title}); free
+text (\texttt{address}, \texttt{description}, \texttt{attributes},
+\texttt{extra\_info}); and the currency columns
+(\texttt{currency\_x/\_y}).\par}
+
+\textit{Columns kept.} The remaining 21 columns are: % src: results/report_facts.csv [raw_columns_kept]
+the price (target); the location name (district, metro-station area or
+settlement) and city; floor area (m\textsuperscript{2}), number of rooms,
+floor (``floor / storeys''), land area (in sot); latitude, longitude and
+page views; category (new build, old build, house or villa, office),
+building type, renovation, title deed and mortgage availability (all
+originally in Azerbaijani); and the flags \texttt{repair}, \texttt{vip},
+\texttt{featured}, \texttt{products\_label} (agency or residential
+complex), \texttt{bill\_of\_sale} and \texttt{mortgage}.
+
+\textit{Cleaning}, in the order of \texttt{clean()}: % src: data_prep.py:clean
+(1)~the floor string ``$k$ / $m$'' is split at ``/'' into \texttt{floor}
+$=k$ and \texttt{total\_floors} $=m$, unparsable or missing parts become
+0, and \texttt{has\_floor} is 1 when the string is present; % src: data_prep.py:clean (step 2)
+(2)~land area: ``sot'' and spaces are removed, a comma becomes a decimal
+point, and a missing value becomes 0; % src: data_prep.py:clean (step 3)
+(3)~price, area, rooms, latitude, longitude and views are converted to
+numbers after removing ``m\textsuperscript{2}'' and spaces and replacing
+commas by points, unparsable values becoming missing. % src: data_prep.py:clean (step 4)
+There is no currency conversion: every raw row is priced in AZN % src: results/report_facts.csv [raw_rows_currency_not_azn = 0]
+and the currency columns are dropped; % src: data_prep.py:LEAKAGE_COLUMNS
+(4)~rows missing price, area or rooms are removed (9{,}412 rows, all % src: results/report_facts.csv [rows_removed_missing]
+without a room count), % src: results/report_facts.csv [raw_rows_rooms_missing = rows_removed_missing]
+then exact duplicate rows (4); % src: results/report_facts.csv [rows_removed_duplicates]
+missing values in seven text columns (location, city, building type,
+category, renovation, title deed, mortgage) become ``Unknown''; % src: data_prep.py:clean (step 5)
+(5)~outliers: only prices of 10{,}000--5{,}000{,}000~AZN and areas of
+10--2{,}000~m\textsuperscript{2} are kept, % src: data_prep.py:clean (step 6)
+removing 45 rows. % src: results/report_facts.csv [rows_removed_outliers]
+This leaves 91{,}314 listings. % src: results/report_facts.csv [rows_clean]
+No statistic of the data is computed during cleaning.
+
+\textit{Encoding.} \texttt{make\_features} one-hot encodes every text
+column with \texttt{pandas.get\_dummies(drop\_first=True)} and keeps the
+numeric columns as they are. % src: data_prep.py:make_features
+This gives 166 features: % src: results/report_facts.csv [n_features]
+9 numeric % src: results/report_facts.csv [n_numeric_features]
+and 157 indicators, % src: results/report_facts.csv [n_onehot_features]
+139 of them for location names. % src: results/report_facts.csv [n_onehot_features, location 139]
+Five flag columns (\texttt{repair}, \texttt{vip}, \texttt{featured},
+\texttt{bill\_of\_sale}, \texttt{mortgage}) have a single non-missing % src: results/report_facts.csv [text_columns_without_feature = 5]
+value, so \texttt{drop\_first} leaves them no column; the renovation,
+title-deed and mortgage information still enters through the Azerbaijani
+renovation, title-deed and mortgage columns.
+
+\textit{Split and labels.} \texttt{train\_val\_test\_split} makes a seeded
+random 70/15/15 split: 15\% for test, then 15/85 of the rest for
+validation. % src: data_prep.py:train_val_test_split
+It can stratify on a tier label, but our pipeline calls it without one, % src: benchmark.py:run_benchmark (stage 1), svm_tuning.py:run_tuning
+so the split is \emph{not} stratified (Section~\ref{sec:limits}). It
+yields 63{,}919 training, % src: results/report_facts.csv [n_train]
+13{,}697 validation % src: results/report_facts.csv [n_val]
+and 13{,}698 test listings. % src: results/report_facts.csv [n_test]
+\texttt{make\_tier\_label} sets the tier threshold to the median
+\emph{training} price, 215{,}000~AZN, % src: results/report_facts.csv [tier_threshold_train_median]
+and labels a listing premium (1) if its price is at least the threshold; % src: data_prep.py:make_tier_label
+validation and test use the same threshold. The classes are balanced:
+50.2\% premium in training, % src: results/report_facts.csv [premium_share_train 0.5024]
+50.7\% in validation and 50.0\% in test. % src: results/report_facts.csv [premium_share_val 0.5065, premium_share_test 0.5004]
+For the SVMs, \texttt{standardize} rescales every feature with the
+training mean and standard deviation (a constant column is left
+unscaled). % src: data_prep.py:standardize
 
 \begin{table}[t]
   \centering
-  \caption{Dataset summary after cleaning.}
+  \caption{Dataset summary.}
   \label{tab:data}
   \begin{tabular}{@{}lr@{}}
     \toprule
     Property & Value \\
     \midrule
-    Rows (after cleaning)       & --- \\
-    Features used               & --- \\
-    Train / Val / Test split    & --- / --- / --- \\
-    Price-tier balance (\%)     & --- \\
+    Raw rows / columns          & 100{,}775 / 51 \\ % src: results/report_facts.csv [raw_rows, raw_columns]
+    Rows after cleaning         & 91{,}314 \\ % src: results/report_facts.csv [rows_clean]
+    Features (numeric + one-hot) & 166 (9 + 157) \\ % src: results/report_facts.csv [n_features, n_numeric_features, n_onehot_features]
+    Train / val / test rows     & 63{,}919 / 13{,}697 / 13{,}698 \\ % src: results/report_facts.csv [n_train, n_val, n_test]
+    Tier threshold (train median) & 215{,}000 AZN \\ % src: results/report_facts.csv [tier_threshold_train_median]
+    Premium \%, train / val / test & 50.2 / 50.7 / 50.0 \\ % src: results/report_facts.csv [premium_share_train, _val, _test]
     \bottomrule
   \end{tabular}
 \end{table}
 
+% =====================================================================
+\section{Exploratory Data Analysis}
+\label{sec:eda}
+We explored the training split only (63{,}919 listings), % src: results/eda_summary.csv [n_train]
+so nothing seen here can leak validation or test prices into a choice. % src: eda.py:load_training_rows
+Prices are strongly right-skewed (Fig.~\ref{fig:eda-price}): the mean is
+271{,}925~AZN against a median of 215{,}000, % src: results/eda_summary.csv [price_mean 271924.6, price_median 215000]
+and the skewness is 6.22. % src: results/eda_summary.csv [price_skew 6.2249]
+The logarithm removes most of it (skewness 0.29), % src: results/eda_summary.csv [log_price_skew 0.2930]
+which is why Task~A predicts $\log(\text{price})$: squared errors on the
+log scale weigh a 10\% error equally at every price level. The tiers have
+31{,}807 standard and 32{,}112 premium training listings. % src: results/eda_summary.csv [n_standard, n_premium]
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/eda_price.pdf}
+  \caption{Training split. Left: price, without the 640 listings above % src: results/eda_summary.csv [rows_above_p99]
+  the 99th percentile (1{,}234{,}460~AZN). % src: results/eda_summary.csv [price_p99]
+  Middle: $\log(\text{price})$, the Task~A target. Dashed: the tier
+  threshold. Right: Task~B class balance.}
+  \label{fig:eda-price}
+\end{figure*}
+
+Floor area is the strongest single signal (Fig.~\ref{fig:eda-features}):
+log area and log price correlate at 0.73. % src: results/eda_summary.csv [corr_log_area_log_price 0.7319]
+The median price rises with the number of rooms, from 107{,}500~AZN for % src: results/eda_summary.csv [median_price_rooms_1]
+one room to 510{,}000~AZN for six or more, % src: results/eda_summary.csv [median_price_rooms_6_plus]
+but the price ranges of neighbouring room counts overlap widely. On the
+map, the most expensive listings form a dense cluster in central Baku, at
+the south-west of the plotted area, and prices fall towards the outer
+settlements. Location therefore matters beyond size, which the models
+confirm (Section~\ref{sec:results}).
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/eda_features.pdf}
+  \caption{Training split. Left: floor area against price (log-log,
+  darker = more listings). Middle: price by number of rooms (boxes:
+  quartiles; whiskers: 1.5 IQR). Right: listing locations coloured by
+  $\log(\text{price})$; the map shows the central 98\% of latitudes and % src: eda.py:MAP_QUANTILES (0.01, 0.99)
+  longitudes, 61{,}579 of the 63{,}919 listings.} % src: results/eda_summary.csv [map_rows_shown, n_train]
+  \label{fig:eda-features}
+\end{figure*}
+
+% =====================================================================
 \section{Method}
 \subsection{Decision tree (from scratch)}
-Describe your impurity criteria (Gini / entropy / MSE reduction), the
-split search, recursion, leaf rule, and hyperparameters.
+\textit{Structure.} Each \texttt{Node} stores a feature index and
+threshold (internal nodes), its two children, a leaf value, and the number
+of training rows and the impurity at the node. % src: decision_tree.py:Node
+\texttt{fit} records the classes present in $y$ and grows the tree
+recursively from the root at depth 0. % src: decision_tree.py:DecisionTree.fit
+The \texttt{random\_state} argument only seeds NumPy's global generator;
+the algorithm itself uses no randomness. % src: decision_tree.py:DecisionTree.fit
+
+\textit{Growth and stopping.} \texttt{\_grow} first stores the node's row
+count and impurity. The node becomes a leaf if it is pure, has fewer than
+\texttt{min\_samples\_split} rows, or has reached \texttt{max\_depth}; % src: decision_tree.py:DecisionTree._grow
+otherwise it searches for the best split, and becomes a leaf if none is
+valid. A valid split leaves at least \texttt{min\_samples\_leaf} rows in
+each child % src: decision_tree.py:DecisionTree._best_split
+and decreases the impurity by at least \texttt{min\_impurity\_decrease},
+measured as~(\ref{eq:gain}) at the node (scikit-learn additionally
+weights this test by the node's share of all rows). % src: decision_tree.py:DecisionTree._best_split
+The default of this fourth parameter is 0, so a split with zero gain is
+still accepted. % src: decision_tree.py:DecisionTree.__init__, _best_split (max_decrease >= min_impurity_decrease)
+Rows with $x_j \le t$ go left, the others right.
+
+\textit{Split search.} For every feature, the candidate thresholds are the
+\emph{observed} distinct values of that feature in the node (not
+midpoints between them, as in scikit-learn). For each candidate the
+children's impurities are recomputed from scratch, and the split with the
+largest decrease~(\ref{eq:gain}) wins; on a tie the first one found, i.e.\
+the lowest feature index and smallest threshold, is kept. % src: decision_tree.py:DecisionTree._best_split
+A node with $m$ rows thus costs $O(m)$ per candidate threshold, which
+makes the search slow (Section~\ref{sec:results}).
+
+\textit{Criteria.} For classification the impurity is Gini or entropy
+with $\log_2$, as in~(\ref{eq:imp}). For regression it is the variance of
+the node's targets (\texttt{np.var}), i.e.\ $I_{\text{MSE}}$, whatever
+the \texttt{criterion} string. % src: decision_tree.py:DecisionTree._impurity
+
+\textit{Prediction.} A regression leaf stores the mean target, a
+classification leaf the class frequencies of its rows. % src: decision_tree.py:DecisionTree._calculate_leaf_value
+A sample follows the thresholds to a leaf; \texttt{predict} returns the
+mean, or the class with the highest frequency (a tie goes to the first
+class, standard), and \texttt{predict\_proba} returns the frequencies. % src: decision_tree.py:DecisionTree.predict, predict_proba
+We use the premium frequency as the ROC score. % src: benchmark.py:_fit_and_score ("proba")
+
+\textit{Feature importance.} \texttt{tree\_feature\_importances} (in
+\texttt{evaluate.py}) walks the fitted tree and adds, for every internal node, its weighted
+impurity decrease $n_t I_t - n_L I_L - n_R I_R$ to the node's split
+feature, then normalises the sum to~1, using the stored node
+statistics. This is scikit-learn's mean decrease in impurity. % src: evaluate.py:tree_feature_importances
+
+\textit{Correctness check.} \texttt{tests/test\_decision\_tree.py} fits
+our tree and scikit-learn's with the same settings (\texttt{max\_depth=2})
+on two six-row toy datasets and requires identical class predictions and
+regression predictions equal to five decimals. % src: tests/test_decision_tree.py:test_classification_match, test_regression_match
+Section~\ref{sec:results} repeats the comparison on the full data.
 
 \subsection{Support-vector machine (from scratch)}
-State the objective and the Pegasos update you implemented:
-\begin{equation}
-  J(\mathbf{w},b)=\tfrac{\lambda}{2}\lVert\mathbf{w}\rVert^{2}
-  +\tfrac{1}{n}\sum_{i=1}^{n}\max\!\big(0,\,1-y_i(\mathbf{w}^{\top}\mathbf{x}_i+b)\big).
-\end{equation}
-Explain the learning-rate schedule, feature scaling, and your non-linear
-extension (kernelised Pegasos or random Fourier features), if any.
+\textit{Objective and labels.} \texttt{PegasosSVM} minimises~(\ref{eq:svm})
+with an unregularised bias $b$. % src: svm.py:PegasosSVM._record_objective, _fit_features
+The two training classes are sorted and mapped to $-1$ and $+1$, so
+standard is $-1$ and premium $+1$; \texttt{predict} returns premium when
+the score $\mathbf{w}^\top\mathbf{z} + b \ge 0$. % src: svm.py:PegasosSVM._to_pm1, predict
 
+\textit{Update as implemented.} Training starts from
+$\mathbf{w} = \mathbf{0}$, $b = 0$ and makes one update per example; it is
+single-example, not mini-batch, Pegasos. % src: svm.py:PegasosSVM._fit_features
+With \texttt{n\_epochs} set, as in all our runs, the data is visited in a
+new random order in each epoch, for $T = \texttt{n\_epochs}\cdot n$
+steps. % src: svm.py:PegasosSVM._fit_features (n_steps, rng.permutation)
+At step $t$ the code computes the margin $y_i(\mathbf{w}^\top\mathbf{z}_i + b)$
+with the current parameters, sets $\eta_t = 1/(\lambda t^{p})$ with
+$p = 1$ (the default, used throughout), shrinks
+$\mathbf{w} \leftarrow (1 - \eta_t\lambda)\mathbf{w}$ and, if the margin
+is below~1, adds $\eta_t y_i \mathbf{z}_i$ to $\mathbf{w}$ and
+$\eta_t y_i$ to $b$. % src: svm.py:PegasosSVM._fit_features
+Finally $\mathbf{w}$ (not $b$) is projected onto the ball of radius
+$1/\sqrt{\lambda}$. % src: svm.py:PegasosSVM._fit_features (radius = 1/sqrt(lambda_))
+This is update~(\ref{eq:pegasos}) plus a bias that takes the same
+sub-gradient step but is never shrunk or projected. The
+\texttt{batch\_size} parameter only splits the Fourier mapping and
+prediction into blocks to bound memory. % src: svm.py:RandomFourierFeatures.transform, PegasosSVM.decision_function
+
+\textit{Diagnostics.} The model records the objective~(\ref{eq:svm}) and
+the mean hinge loss on all training rows at step 0, every
+\texttt{history\_every} steps and at the last step; % src: svm.py:PegasosSVM._record_objective, _fit_features
+we set \texttt{history\_every} to $n$, one checkpoint per epoch. % src: svm_tuning.py:run_tuning, benchmark.py:_StandardizedPegasos.fit
+After training it stores $\lVert\mathbf{w}\rVert$, the margin width
+$2/\lVert\mathbf{w}\rVert$, and as support vectors the training rows with
+$y_i(\mathbf{w}^\top\mathbf{z}_i + b) \le 1 + 10^{-10}$, i.e.\ on or
+inside the margin, including misclassified rows. This margin-based
+definition differs from the non-zero dual coefficients of a QP
+solver. % src: svm.py:PegasosSVM._fit_features (support_)
+
+\textit{Fourier features.} The RFF variant uses the class
+\texttt{RandomFourierFeatures}, which draws $W$ and $\mathbf{a}$ as in
+Section~\ref{sec:background} from a seeded generator, once, when the model
+is fit, and maps every input with $\mathbf{z}(\mathbf{x})=\sqrt{2/D}\cos(\mathbf{x}W+\mathbf{a})$; % src: svm.py:RandomFourierFeatures.fit, transform
+Pegasos then learns $\mathbf{w} \in \mathbb{R}^D$ and $b$. We use
+$D = 500$. % src: results/report_facts.csv [svm_rff_n_components]
+RFF was chosen as the non-linear option for memory: an exact float64
+kernel matrix on our training split would need 32.7~GB, % src: results/report_facts.csv [kernel_matrix_gb 32.69]
+the 500-dimensional Fourier matrix 256~MB. % src: results/report_facts.csv [rff_matrix_mb 255.7]
+The RFF model did not, however, win the validation comparison: the final
+SVM is linear (Section~\ref{sec:tuning}). Both variants are sweepable
+with the same code, \texttt{svm\_experiment.sweep\_svm} for RFF. % src: svm_experiment.py:sweep_svm
+
+% =====================================================================
 \section{Experimental Setup}
-Metrics (RMSE/MAE/$R^2$ for regression; precision/recall/F1/AUC for
-classification), hyperparameter search protocol, seeds, and the
-scikit-learn baselines you compared against (with matched settings).
+\label{sec:setup}
 
-\section{Results}
-Lead with a results table; back every claim with a number or figure.
+\subsection{Targets, metrics and scaling}
+Task~A predicts $\log(\text{price})$; we report RMSE, MAE and $R^2$ on
+the log scale and, after $\exp(\cdot)$, in AZN. For Task~B we report
+precision, recall and F1 for the premium class and ROC-AUC computed from
+tree leaf probabilities or SVM decision values. All metrics are our own
+NumPy code, tested against \texttt{sklearn.metrics}. % src: evaluate.py, tests/test_evaluate.py
+The SVMs receive standardized features; the trees use the unscaled
+features. % src: benchmark.py:_StandardizedPegasos, _task_a_models, _task_b_models
 
-\begin{table}[t]
-  \centering
-  \caption{Headline results (test set, mean $\pm$ std over folds).}
-  \label{tab:results}
-  \begin{tabular}{@{}lcc@{}}
-    \toprule
-    Model & Task A (RMSE) & Task B (F1) \\
-    \midrule
-    Ours: decision tree     & --- & --- \\
-    Ours: SVM (Pegasos)     & n/a & --- \\
-    scikit-learn baseline   & --- & --- \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\subsection{Cross-validation and the held-out test}
+No choice uses the test split. Cross-validation uses a stratified sample
+of 20{,}000 % src: results/report_facts.csv [cv_rows]
+of the 77{,}616 training and validation rows % src: results/report_facts.csv [cv_pool_rows]
+and 5-fold stratified K-fold. % src: results/report_facts.csv [cv_folds]
+Inside every fold, the tier threshold and the SVM scaler are recomputed
+from that fold's training rows only, and every model sees the same folds
+and features. We report the mean $\pm$ sample standard deviation over
+folds. The subsample keeps the run practical: our tree takes about 10~s
+per fit at 16{,}000 rows % src: results/benchmark_cv_task_b.csv [Tree gini (ours), Fit s mean 10.27]
+and 85~s on the full training split. % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 85.27]
+For the held-out test, each model is fit once on the full training split
+and scored once on the test split.
+
+\subsection{Matched scikit-learn baselines}
+Our trees are compared with \texttt{DecisionTreeRegressor} and
+\texttt{DecisionTreeClassifier} (Gini and entropy) with the same
+\texttt{max\_depth}, \texttt{min\_samples\_split},
+\texttt{min\_samples\_leaf} and seed. Linear Pegasos is compared with
+\texttt{SGDClassifier} (hinge loss, L2 penalty, $\alpha = \lambda$, the
+same number of epochs), which minimises the same objective~(\ref{eq:svm}),
+and with \texttt{SVC(kernel="linear")}. RFF Pegasos is compared with the
+same random-feature construction (\texttt{RBFSampler}, same $\gamma$ and
+dimension) followed by \texttt{SGDClassifier}, and with
+\texttt{SVC(kernel="rbf")} at the same $\gamma$. % src: benchmark.py:_svm_models, _sgd_pipeline, _SubsampledSVC
+For \texttt{SVC} we set $C = 1/(n\lambda)$, which makes its objective a
+rescaling of~(\ref{eq:svm}); $n$ is the number of rows SVC actually sees. % src: benchmark.py:_SubsampledSVC.fit
+Exact-kernel SVC grows roughly quadratically with $n$, so it is fit on at
+most 10{,}000 stratified training rows; % src: results/report_facts.csv [svc_max_rows]
+all other models use every training row.
+
+\subsection{Timing and seeds}
+We record wall-clock fit and prediction time for every model on one
+machine (Apple M4), and the fit time of both trees and both linear SVM
+solvers at 2{,}000, 4{,}000, 8{,}000 and 16{,}000 training rows. % src: results/benchmark_scaling.csv [n_train]
+Every random choice (split, subsamples, folds, models, random features)
+uses the seed 42. % src: results/report_facts.csv [seed]
+
+% =====================================================================
+\section{Hyperparameter Tuning}
+\label{sec:tuning}
+\subsection{SVM: regularisation and kernel width}
+Both SVMs were tuned on train $\to$ validation, fitting on all 63{,}919 % src: results/report_facts.csv [n_train]
+training rows and scoring on the 13{,}697 validation rows. % src: results/report_facts.csv [n_val]
+The grid has 7 values of $\lambda$, % src: results/report_facts.csv [svm_grid_n_lambdas]
+from $10^{-7}$ to $10^{-1}$, % src: results/report_facts.csv [svm_grid_lambda_min, svm_grid_lambda_max]
+for the linear kernel and for RFF with $D = 500$ % src: results/report_facts.csv [svm_rff_n_components]
+and $\gamma \in \{0.1, 1, 10\} \times 1/166$, % src: results/report_facts.csv [svm_grid_gamma_multipliers, n_features]
+where $1/166$ (one over the number of features) is the usual
+\emph{scale} default for standardized inputs; each model trains for
+20 epochs. % src: results/report_facts.csv [svm_linear_n_epochs]
+The selection metric is validation F1; ROC-AUC is recorded too. % src: svm_tuning.py:_f1_recording_auc
+
+Fig.~\ref{fig:tuning} shows the sweep. The linear SVM peaks at
+$\lambda = 10^{-3}$ with F1 0.910. % src: results/svm_tuning/sweep_table.csv [linear, 0.001, val_F1 0.9097]
+Smaller $\lambda$ lets $\lVert\mathbf{w}\rVert$ grow to 2{,}847 at
+$10^{-7}$ % src: results/svm_tuning/sweep_table.csv [linear, 1e-07, weight_norm 2846.8]
+and F1 fall to 0.877; % src: results/svm_tuning/sweep_table.csv [linear, 1e-07, val_F1 0.8770]
+larger $\lambda$ widens the margin (1.71 at $10^{-1}$, against 0.44 at % src: results/svm_tuning/sweep_table.csv [linear, 0.1, margin_width 1.7063; 0.001, 0.4423]
+$10^{-3}$) and puts 32{,}143 training rows on or inside it, % src: results/svm_tuning/sweep_table.csv [linear, 0.1, support_count 32143]
+underfitting at F1 0.862. % src: results/svm_tuning/sweep_table.csv [linear, 0.1, val_F1 0.8619]
+RFF does best with small $\lambda$ and the widest kernel (smallest
+$\gamma$): its best F1 is 0.908, at $\gamma = 0.1 \times 1/166$ and % src: results/svm_tuning/sweep_table.csv [rff, 1e-06, gamma_x_scale 0.1, val_F1 0.9080]
+$\lambda = 10^{-6}$, while $\gamma = 10 \times 1/166$ never exceeds 0.852. % src: results/svm_tuning/sweep_table.csv [rff, gamma_x_scale 10, max val_F1 0.8519]
+At $\lambda = 10^{-1}$ every RFF model scores F1 0.672, % src: results/svm_tuning/sweep_table.csv [rff, 0.1, val_F1 0.6724 for all three gammas]
+the F1 of labelling every validation listing premium. % src: 2 * 0.5065 / (1 + 0.5065) = 0.6724 from results/report_facts.csv [premium_share_val]
 
 \begin{figure}[t]
   \centering
-  % \includegraphics[width=\linewidth]{figures/your_plot.pdf}
-  \fbox{\parbox[c][3.2cm][c]{0.9\linewidth}{\centering\small
-    Replace with a figure (e.g.\ validation curve, confusion matrix,
-    or feature importances). Save plots to \texttt{figures/}.}}
-  \caption{One clear figure beats ten decorative ones.}
-  \label{fig:main}
+  \includegraphics[width=\linewidth]{figures/svm_validation_f1.pdf}
+  \caption{SVM tuning: validation F1 against $\lambda$ for the linear
+  kernel and RFF at three kernel widths ($\textit{scale} = 1/166$). Stars:
+  the configuration chosen for each kernel; filled: the final model.}
+  \label{fig:tuning}
 \end{figure}
 
-\section{Discussion and Limitations}
-Where and why each model fails (luxury outliers, sparse districts,
-scaling effects), the bias--variance story, and honest limitations.
+\textit{Selection rule.} We do not simply take the highest F1. Within each
+kernel, among configurations whose validation F1 is within 0.005 % src: results/report_facts.csv [svm_f1_tolerance]
+of the best, we take the \emph{largest}~$\lambda$. % src: svm_tuning.py:_select_stable
+Pegasos uses the step size $1/(\lambda t)$ and its guarantee after $T$
+updates scales as $1/(\lambda T)$, so it needs $T \gg 1/\lambda$. The
+highest-F1 RFF configuration had $\lambda = 10^{-6}$, % src: results/report_facts.csv [svm_rff_max_f1_lambda]
+so $1/\lambda = 10^6$ updates, while a cross-validation fold of
+16{,}000 rows % src: results/report_facts.csv [cv_fit_rows_per_fold]
+gives only $16{,}000 \times 20 = 320{,}000$; that model did not converge
+reliably on the folds. A larger $\lambda$ within the tolerance is
+almost as good on validation and safer to train. The rule moved the RFF
+choice to $\lambda = 10^{-5}$ % src: results/report_facts.csv [svm_rff_lambda_]
+with $\gamma = 1/166$ % src: results/report_facts.csv [svm_rff_gamma 0.006024 = 1/166]
+at a cost of 0.004 validation F1 % src: results/report_facts.csv [svm_rff_max_f1 0.9080 - svm_rff_val_f1 0.9042]
+and kept the linear choice at $\lambda = 10^{-3}$. % src: results/report_facts.csv [svm_linear_lambda_]
+The \emph{final} SVM is the kernel with the higher validation F1:
+linear, % src: results/report_facts.csv [svm_final_kernel]
+0.910 against 0.904 for RFF, % src: results/report_facts.csv [svm_linear_val_f1, svm_rff_val_f1]
+although RFF has the marginally higher validation ROC-AUC (0.9654 % src: results/report_facts.csv [svm_rff_val_auc]
+against 0.9648). % src: results/report_facts.csv [svm_linear_val_auc]
+Both SVMs are benchmarked.
 
+\subsection{Decision tree}
+% UPDATE AFTER TREE SWEEP
+No tree sweep on the real data was available for this report
+(no \texttt{results/tree\_final\_config.json}), so both tasks use one
+fixed configuration: maximum depth 10, % src: results/report_facts.csv [tree_task_a_max_depth, tree_task_b_max_depth]
+at least 10 rows to split a node, % src: results/report_facts.csv [tree_task_a_min_samples_split, tree_task_b_min_samples_split]
+at least 5 rows per leaf, % src: results/report_facts.csv [tree_task_a_min_samples_leaf, tree_task_b_min_samples_leaf]
+and no minimum impurity decrease. % src: benchmark.py:_tree_params (not set) -> decision_tree.py:DecisionTree.__init__ default 0.0
+These values were set before any experiment and are not tuned. For
+Task~B the only comparison we can make is between criteria, from the
+cross-validation table: Gini and entropy reach the same F1, % src: results/benchmark_cv_task_b.csv [Tree gini (ours), F1 0.9108 ± 0.0028; Tree entropy (ours), F1 0.9104 ± 0.0034]
+$0.911 \pm 0.003$ and $0.910 \pm 0.003$, % src: results/benchmark_cv_task_b.csv [Tree gini (ours) / Tree entropy (ours), F1]
+while entropy ranks slightly better (ROC-AUC $0.963 \pm 0.003$ % src: results/benchmark_cv_task_b.csv [Tree entropy (ours), ROC-AUC 0.9632 ± 0.0028]
+against $0.959 \pm 0.003$) % src: results/benchmark_cv_task_b.csv [Tree gini (ours), ROC-AUC 0.9587 ± 0.0034]
+and fits faster (8.6~s against 10.3~s per fold). % src: results/benchmark_cv_task_b.csv [Fit s, Tree entropy (ours) 8.6240, Tree gini (ours) 10.2737]
+We report the Gini tree as our main Task~B tree because that was fixed
+in advance; the data gives no reason to prefer either.
+
+% =====================================================================
+\section{Results}
+\label{sec:results}
+
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{Headline results on the held-out test set, with the 5-fold CV
+  mean $\pm$ std where marked ``CV''. Task~A errors are on the log scale
+  unless marked AZN; Task~B metrics are for the premium class. n/a: the
+  model is for the other task. $^{*}$Fit on at most 10{,}000 training
+  rows. All metrics: Tables~\ref{tab:full-a} and~\ref{tab:full-b}.}
+  \label{tab:main}
+  \input{tables/results_headline.tex}
+\end{table*}
+
+Table~\ref{tab:main} lists every model. On Task~A our tree reaches a test
+$R^2$ of 0.847 on log price % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8470]
+(0.756 in AZN), % src: results/benchmark_test_task_a.csv [Tree (ours), R2 AZN 0.7557]
+against 0.846 for the scikit-learn tree; % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8463]
+in cross-validation the two score $0.829 \pm 0.006$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log 0.8289 ± 0.0062]
+and $0.831 \pm 0.006$. % src: results/benchmark_cv_task_a.csv [Tree (sklearn), R2 log 0.8308 ± 0.0064]
+The gap between log scale and AZN comes from the most expensive
+listings (Section~\ref{sec:errors}).
+
+On Task~B the trees lead. Our Gini tree reaches test F1 0.921 % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9211]
+and ROC-AUC 0.970, % src: results/benchmark_test_task_b.csv [Tree gini (ours), ROC-AUC 0.9697]
+equal to scikit-learn's tree (F1 0.921). % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), F1 0.9214]
+The final linear Pegasos SVM reaches F1 0.899 % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.8987]
+and ROC-AUC 0.960, % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), ROC-AUC 0.9604]
+level with its baselines: SGD 0.898 % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), F1 0.8985]
+and linear SVC 0.897. % src: results/benchmark_test_task_b.csv [SVC linear (sklearn, max 10k rows), F1 0.8971]
+RFF Pegasos gets F1 0.895, % src: results/benchmark_test_task_b.csv [Pegasos RFF (ours), F1 0.8951]
+between RFF SGD (0.892) % src: results/benchmark_test_task_b.csv [SGD hinge RFF (sklearn), F1 0.8918]
+and exact RBF SVC (0.898). % src: results/benchmark_test_task_b.csv [SVC RBF (sklearn, max 10k rows), F1 0.8984]
+Each of our models is within 0.003 F1 of its best matched baseline. % src: results/error_analysis.md [Findings, bullet 1]
+RFF Pegasos is the least stable model in cross-validation: F1
+$0.879 \pm 0.010$, % src: results/benchmark_cv_task_b.csv [Pegasos RFF (ours), F1 0.8789 ± 0.0098]
+against $0.900 \pm 0.003$ for linear Pegasos. % src: results/benchmark_cv_task_b.csv [Pegasos linear (ours), F1 0.9001 ± 0.0027]
+Fig.~\ref{fig:roc} shows that the ROC curves of our models and their
+baselines nearly coincide.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/analysis_roc_curves.pdf}
+  \caption{Task~B ROC curves on the test set by model family, zoomed on
+  false-positive rates up to 0.3. Solid: our models; dashed:
+  scikit-learn. Legend numbers: ROC-AUC. SVC is fit on at most 10{,}000
+  rows.}
+  \label{fig:roc}
+\end{figure*}
+
+\textit{Our trees versus scikit-learn's.} The trees are practically the
+same model. Both Task~B Gini trees have depth 10 % src: results/tree_comparison.csv [Task B gini, depth ours/sklearn]
+and 453 leaves, % src: results/tree_comparison.csv [Task B gini, leaves ours/sklearn]
+split first on floor area, and agree on 99.9\% of test labels. % src: results/tree_comparison.csv [Task B gini, test agreement % 99.88]
+The root thresholds differ only by convention: 90.1~m\textsuperscript{2} % src: results/tree_comparison.csv [Task B gini, root ours]
+for ours, an observed training value, and 90.15~m\textsuperscript{2} % src: results/tree_comparison.csv [Task B gini, root sklearn]
+for scikit-learn, the midpoint between neighbouring values. The Task~A
+trees have 659 and 661 leaves; % src: results/tree_comparison.csv [Task A tree, leaves ours/sklearn]
+their predictions correlate at 0.9987, % src: results/tree_comparison.csv [Task A tree, pred corr]
+differ by 0.0021 log units on average, % src: results/tree_comparison.csv [Task A tree, mean |diff| log]
+and 98.3\% agree within 0.01 log units (about 1\% of the price). % src: results/tree_comparison.csv [Task A tree, within 0.01 log %]
+The feature importances correlate above 0.9999 for all three pairs % src: results/tree_comparison.csv [importance corr, min 0.999993]
+(Fig.~\ref{fig:importance}). Floor area dominates both tasks, followed
+by longitude and latitude, in line with the EDA.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/analysis_feature_importance.pdf}
+  \caption{Feature importance (mean decrease in impurity, normalised) of
+  our trees and scikit-learn's: the 15 most important features by our
+  importance. Location names end in q.\ (settlement), m.\ (metro-station
+  area) or r.\ (district).}
+  \label{fig:importance}
+\end{figure*}
+
+\textit{Speed.} Matching the models' quality costs time for the tree. On
+the full training split our Gini tree fits in 85.3~s % src: results/benchmark_test_task_b.csv [Tree gini (ours), Fit s 85.2695]
+against 0.27~s for scikit-learn, % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), Fit s 0.2696]
+about 316 times slower. % src: 85.2695 / 0.2696 from results/benchmark_test_task_b.csv
+Fig.~\ref{fig:scaling} shows the growth with $n$: from 2{,}000 to
+16{,}000 rows our tree's fit time grows 12.7-fold % src: results/benchmark_scaling.csv [Tree gini (ours), 9.9815 / 0.7832]
+for 8 times the data, scikit-learn's 9.1-fold, % src: results/benchmark_scaling.csv [Tree gini (sklearn), 0.0578 / 0.00634]
+and both linear SVM solvers about 8.3--8.6-fold, i.e.\ linearly. % src: results/benchmark_scaling.csv [Pegasos linear 0.6277/0.0753 = 8.34; SGD 0.0529/0.00613 = 8.63]
+Linear Pegasos fits the full training split in 2.7~s, % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), Fit s 2.6686]
+against 0.28~s for SGD. % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), Fit s 0.2842]
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/benchmark_scaling.pdf}
+  \caption{Fit time against training size (log-log), Task~B, one fit per
+  point. Slope: fitted exponent $k$ in time $\propto n^k$. Our tree grows
+  faster than linearly; both SVM solvers grow linearly.} % src: results/benchmark_meta.json [scaling_slopes]
+  \label{fig:scaling}
+\end{figure}
+
+% =====================================================================
+\section{Error Analysis}
+\label{sec:errors}
+We analyse the test errors of our Task~A tree and, on Task~B, of our Gini
+tree and the final linear SVM.
+
+\textit{The tier boundary.} Task~B errors are balanced between the
+classes (precision 0.920, recall 0.922 for the tree; % src: results/benchmark_test_task_b.csv [Tree gini (ours), Precision 0.9198, Recall 0.9224]
+Fig.~\ref{fig:confusion}) and concentrate near the threshold. For
+listings within 5\% of 215{,}000~AZN the tree misclassifies 35.0\% % src: results/error_analysis.md [Task B: distance from the tier threshold, 0-5%, B error % tree 35.05]
+and the SVM 43.3\%, % src: results/error_analysis.md [Task B: distance from the tier threshold, 0-5%, B error % SVM 43.26]
+while beyond 40\% from the threshold both err on 1.5\%. % src: results/error_analysis.md [Task B: distance from the tier threshold, >= 40%, 1.49 / 1.52]
+The 5\% band alone holds 30\% of all tree errors. % src: results/error_analysis.md [Findings, bullet 5]
+Most of the remaining Task~B error is therefore noise in listing prices
+close to an arbitrary cut-off.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/analysis_confusion_matrices.pdf}
+  \caption{Task~B confusion matrices on the test set, our Gini tree and
+  our final linear Pegasos SVM (counts and share of the true tier).}
+  \label{fig:confusion}
+\end{figure}
+
+\textit{Price extremes.} On Task~A the median absolute percentage error
+is 13.6\% in the cheapest decile % src: results/error_analysis.md [By true-price decile, D1, A MdAPE % 13.62]
+and 18.9\% in the most expensive, % src: results/error_analysis.md [By true-price decile, D10, A MdAPE % 18.88]
+against 9.3--11.7\% for deciles 3--7 % src: results/error_analysis.md [By true-price decile, D3-D7, A MdAPE % 9.33-11.72]
+(Fig.~\ref{fig:deciles}). The errors are biased towards the middle: the
+cheapest decile is over-predicted by a median 9.0\% % src: results/error_analysis.md [By true-price decile, D1, A median bias % 8.99]
+and the most expensive under-predicted by 14.8\%. % src: results/error_analysis.md [By true-price decile, D10, A median bias % -14.75]
+A tree of depth 10 predicts leaf means, so prices at the extremes are
+pulled towards the average of their leaf. The effect is strongest for
+the 141 most expensive listings (top 1\%, from 1{,}200{,}000~AZN): % src: results/error_analysis.md [Findings, bullet 4: n = 141, price >= 1,200,000 AZN]
+median absolute error 32.2\% % src: results/error_analysis.md [Top 1% most expensive listings, A MdAPE % 32.24]
+and a median under-prediction of 26.8\%. % src: results/error_analysis.md [Top 1% most expensive listings, A median bias % -26.85]
+For Task~B the same listings are easy (tree error 1.4\%), % src: results/error_analysis.md [Top 1% most expensive listings, B error % tree 1.42]
+being far from the threshold.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/analysis_error_by_price_decile.pdf}
+  \caption{Errors by true-price decile (decile edges from training
+  prices), test set. Left: Task~A median absolute percentage error of our
+  tree. Right: Task~B error rate; the threshold lies between deciles 5
+  and 6.}
+  \label{fig:deciles}
+\end{figure*}
+
+\textit{Sparse districts.} Error grows as a district's training data
+shrinks. Grouping test listings by how many \emph{training} listings
+their district has, the Task~A median absolute error is 11.0\% % src: results/error_analysis.md [By district size, >= 1000, A MdAPE % 10.99]
+for districts with 1{,}000 or more training rows, % src: results/error_analysis.md [By district size, bin >= 1000]
+13.0\% for 200--999, % src: results/error_analysis.md [By district size, 200-999, A MdAPE % 13.02]
+19.1\% for 50--199 % src: results/error_analysis.md [By district size, 50-199, A MdAPE % 19.06]
+and 24.1\% for 1--49. % src: results/error_analysis.md [By district size, 1-49, A MdAPE % 24.07]
+On Task~B the tree's error rate rises from 7.6\% % src: results/error_analysis.md [By district size, >= 1000, B error % tree 7.63]
+to 11.3\% in the sparsest group. % src: results/error_analysis.md [By district size, 1-49, B error % tree 11.34]
+One test listing comes from a district with no training rows. % src: results/error_analysis.md [By district size, 0 (unseen in train), n test 1]
+
+\textit{Categories.} Houses and villas are the hardest large group, with
+a median absolute error of 18.1\% % src: results/error_analysis.md [By category, House / villa, A MdAPE % 18.11]
+against 10.8\% for new-build % src: results/error_analysis.md [By category, New build, A MdAPE % 10.83]
+and 10.6\% for old-build apartments. % src: results/error_analysis.md [By category, Old build, A MdAPE % 10.56]
+Offices score 35.2\%, % src: results/error_analysis.md [By category, Office, A MdAPE % 35.24]
+but there are only 26 of them in the test set. % src: results/error_analysis.md [By category, Office, n test 26]
+
+\textit{Worst listings.} Several of the ten worst Task~A listings look
+like data-entry errors rather than model failures: a 1{,}000~m\textsuperscript{2} % src: results/error_analysis.md [10 worst Task A listings, clean_index 54644, area_m2 1,000]
+house on 10 sot listed at 35{,}000~AZN, % src: results/error_analysis.md [10 worst Task A listings, clean_index 54644, land_sot 10, price 35,000]
+and a 61~m\textsuperscript{2} new-build flat listed at 1{,}750{,}000~AZN. % src: results/error_analysis.md [10 worst Task A listings, clean_index 52783, area_m2 61, price 1,750,000]
+No model can price such listings, and they inflate RMSE in AZN.
+
+\textit{What the SVM uses.} The final linear SVM has
+$\lVert\mathbf{w}\rVert = 4.52$, % src: results/error_analysis.md [Final linear SVM, ||w|| 4.5218]
+a margin $2/\lVert\mathbf{w}\rVert = 0.442$ in standardized units, % src: results/error_analysis.md [Final linear SVM, margin width 0.4423]
+and 17{,}799 of the 63{,}919 training points on or inside the margin. % src: results/error_analysis.md [Final linear SVM, support vectors 17,799 of 63,919]
+Floor area carries by far the largest weight towards premium; being in
+an outlying settlement of Baku carries the largest weights towards
+standard (all weights: \url{results/error_analysis/svm_linear_weights.csv}).
+
+% =====================================================================
+\section{Limitations}
+\label{sec:limits}
+\begin{itemize}
+  \item \textit{The trees were not tuned.} Both tasks use the fallback
+  configuration in \texttt{src/benchmark.py} % src: results/report_facts.csv [tree_task_a_source, tree_task_b_source]
+  (maximum depth 10, % src: results/report_facts.csv [tree_task_a_max_depth, tree_task_b_max_depth]
+  minimum 10 samples to split, % src: results/report_facts.csv [tree_task_a_min_samples_split, tree_task_b_min_samples_split]
+  minimum 5 per leaf), % src: results/report_facts.csv [tree_task_a_min_samples_leaf, tree_task_b_min_samples_leaf]
+  because the tree sweep was not available, while the SVMs were tuned on
+  validation. The trees' results are therefore not their best, and the
+  tuning effort between the two model families is unequal.
+  \item \textit{Cross-validation uses a subsample.} CV uses 20{,}000 % src: results/report_facts.csv [cv_rows]
+  of the 77{,}616 available rows, % src: results/report_facts.csv [cv_pool_rows]
+  so each fold trains on 16{,}000 rows, % src: results/report_facts.csv [cv_fit_rows_per_fold]
+  a quarter of the full training split. CV scores are
+  correspondingly lower than the test scores (Task~A $R^2$ $0.829$ % src: results/benchmark_cv_task_a.csv [Tree (ours), R2 log mean 0.8289]
+  against $0.847$) % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8470]
+  and describe the variability of a smaller-data model.
+  \item \textit{One-hot categories come from all rows.} The encoding is
+  built before the split, so categories that occur only in validation or
+  test still get a column. Two such columns are all-zero in training. % src: results/report_facts.csv [onehot_all_zero_in_train = 2]
+  No statistic leaks, and the models never use these columns, but a
+  strict pipeline would fit the encoder on training rows only.
+  \item \textit{Stratification on a full-data label.}
+  \texttt{data\_prep} can stratify the split on a tier computed from the
+  median of \emph{all} prices, which uses test prices. Our pipeline does
+  not use that option: it splits at random and labels with the training
+  median. On this data both medians are 215{,}000~AZN, % src: results/report_facts.csv [full_data_median, tier_threshold_train_median]
+  so 0 labels would differ. % src: results/report_facts.csv [labels_differ_full_vs_train_median]
+  \item \textit{Our tree is slow.} It is about 316 times slower than % src: 85.2695 / 0.2696 from results/benchmark_test_task_b.csv
+  scikit-learn on the full training split and grows faster than
+  linearly with $n$ (Fig.~\ref{fig:scaling}). For every candidate
+  threshold it recomputes the impurity from scratch instead of sweeping
+  sorted values with running sums. This forced the CV subsample and left
+  no budget to tune the tree.
+  \item \textit{Two fields are filled with 0.} For the 15{,}338 listings % src: results/report_facts.csv [rows_no_floor_filled_0]
+  without a floor (15{,}188 houses and 150 offices), % src: results/report_facts.csv [rows_no_floor_house, rows_no_floor_office]
+  floor and building height are set to 0, with a \texttt{has\_floor}
+  flag; for the 76{,}126 listings without a land area, % src: results/report_facts.csv [rows_land_area_filled_0]
+  the land area is set to 0. Here 0 means ``not applicable'', not a
+  measured zero. The trees can separate the two through the flag and the
+  category, but the linear SVM treats 0 as a real value.
+\end{itemize}
+
+% =====================================================================
 \section{Conclusion}
-One short paragraph: what you found and what you would do next.
+Our from-scratch decision tree and Pegasos SVM reach the accuracy of
+matched scikit-learn models on bina.az listings: each is within 0.003 F1 % src: results/error_analysis.md [Findings, bullet 1]
+of its baseline, and our trees reproduce scikit-learn's almost split for
+split. The tree is the better model on both tasks, with test $R^2$ 0.847 % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8470]
+on log price and F1 0.921 on the price tier, % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9211]
+and floor area and location explain most of its decisions. On validation
+the linear SVM beat the Fourier-feature SVM, and a stability-based choice
+of $\lambda$ mattered more than the kernel. The remaining errors sit at
+the tier threshold, at the price extremes and in districts with few
+listings, and a few come from implausible listings. The price of writing
+the tree ourselves is speed: it fits about 316 times more slowly. % src: 85.2695 / 0.2696 from results/benchmark_test_task_b.csv
+Future work: ensembles of our trees (bagging or boosting), a vectorised
+split search over sorted values with running sums, which would also make
+a proper tree sweep affordable, and better location features, such as
+distance to the city centre or target statistics of each district
+computed on training folds.
+
+\section*{Author Contributions}
+{\raggedright
+Mahammad Mammadli implemented the data pipeline (\texttt{data\_prep.py}):
+loading, cleaning, parsing of floor and land area, leakage removal,
+encoding, the stratified split and the training-only tier threshold.
+Ibrahim Aghazade implemented the from-scratch decision tree
+(\texttt{decision\_tree.py}) with Gini, entropy and MSE criteria, the four
+stopping parameters, node statistics and the scikit-learn match test, and
+the tree hyperparameter study. Sahib Aliyev implemented the Pegasos SVM
+(\texttt{svm.py}) with margin, support vectors and random Fourier
+features, plus the sweep and plotting tools (\texttt{svm\_experiment.py},
+\texttt{svm\_plots.py}) and their tests. Khizri Sakhrayev implemented the
+NumPy metrics and tree feature importances (\texttt{evaluate.py}), the
+scikit-learn benchmark (\texttt{benchmark.py}), the SVM tuning on the real
+data with the stability-based selection rule (\texttt{svm\_tuning.py}),
+the error analysis (\texttt{analysis.py}), the EDA figures
+(\texttt{eda.py}), the one-command pipeline (\texttt{run\_all.py}) and the
+README, and wrote and assembled the report.\par}
 
 \section*{Tools and Acknowledgements}
-Disclose any AI-assistant use and what it was used for, plus data/code
-you built on. (Required.)
+{\raggedright
+The code in \texttt{benchmark.py}, \texttt{svm\_tuning.py},
+\texttt{analysis.py}, \texttt{eda.py} and \texttt{run\_all.py}, and the
+text of this report, were produced with Claude Code (Anthropic) under
+Khizri Sakhrayev's direction, from the team's code and results. The SVM
+implementation was written with assistance from Codex, as recorded in
+\texttt{docs/SVM.md}. We used NumPy, pandas, matplotlib and
+scikit-learn~\cite{sklearn}; scikit-learn only for the baselines and
+tests.\par}
 
 % =====================================================================
 \begin{thebibliography}{9}
+\bibitem{cart}
+L.~Breiman, J.~H. Friedman, R.~A. Olshen, and C.~J. Stone,
+\emph{Classification and Regression Trees}. Belmont, CA: Wadsworth, 1984.
+
+\bibitem{cortes}
+C.~Cortes and V.~Vapnik, ``Support-vector networks,''
+\emph{Machine Learning}, vol.~20, no.~3, pp.~273--297, 1995.
+
 \bibitem{pegasos}
 S.~Shalev-Shwartz, Y.~Singer, N.~Srebro, and A.~Cotter,
 ``Pegasos: primal estimated sub-gradient solver for SVM,''
 \emph{Mathematical Programming}, vol.~127, no.~1, pp.~3--30, 2011.
+
+\bibitem{rahimi}
+A.~Rahimi and B.~Recht, ``Random features for large-scale kernel
+machines,'' in \emph{Advances in Neural Information Processing Systems
+20}, 2007, pp.~1177--1184.
+
+\bibitem{sklearn}
+F.~Pedregosa \emph{et al.}, ``Scikit-learn: Machine learning in
+Python,'' \emph{Journal of Machine Learning Research}, vol.~12,
+pp.~2825--2830, 2011.
+
+\bibitem{kaggle}
+sehriyarmemmedli (Kaggle user), ``binaaz-sale-project,'' Kaggle dataset,
+2025.
+\url{https://www.kaggle.com/datasets/sehriyarmemmedli/binaaz-sale-project}
 \end{thebibliography}
+
+% =====================================================================
+\onecolumn
+\appendix
+\renewcommand{\thesection}{\Alph{section}}
+\section{Full Results}
+\label{sec:appendix}
+Tables~\ref{tab:full-a} and~\ref{tab:full-b} give every metric of every
+model: the held-out test value and, below it, the 5-fold CV mean $\pm$
+std. AZN errors are in thousands of AZN. $^{*}$Fit on at most 10{,}000
+training rows.
+
+\begin{table}[h]
+  \centering
+  \small
+  \caption{Task~A (regression of $\log(\text{price})$), all metrics.}
+  \label{tab:full-a}
+  \input{tables/results_task_a.tex}
+\end{table}
+
+\begin{table}[h]
+  \centering
+  \small
+  \caption{Task~B (premium tier), all metrics for the premium class.}
+  \label{tab:full-b}
+  \input{tables/results_task_b.tex}
+\end{table}
 
 \end{document}
