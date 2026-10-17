@@ -2,17 +2,10 @@
 decision_tree.py — a decision tree built FROM SCRATCH (NumPy only).
 
 Must support BOTH tasks:
-- classification (criterion = "gini" or "entropy")  -> price tier
-- regression     (criterion = "mse")                -> price
+  - classification (criterion = "gini" or "entropy")  -> price tier
+  - regression     (criterion = "mse")                -> price
 
 scikit-learn is NOT allowed here. This is your own code.
-
-Suggested design:
-- a small Node (feature index, threshold, left, right, value/leaf_value),
-- recursive _grow with a best-split search over features & thresholds,
-- impurity functions (gini / entropy / mse) and the impurity-decrease
-    objective used to pick splits,
-- hyperparameters that control overfitting (below).
 """
 
 from __future__ import annotations
@@ -25,8 +18,8 @@ class Node:
     def __init__(self):
         self.feature = None      # int: feature index to split on (internal)
         self.threshold = None    # float: split threshold (internal)
-        self.left = None         # Node: 
-        self.right = None        # Node: 
+        self.left = None         # Node: left child
+        self.right = None        # Node: right child
         self.value = None        # leaf prediction (class proba array or mean float)
         
         # Added for P6 feature importance requirements
