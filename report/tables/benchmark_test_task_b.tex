@@ -1,0 +1,13 @@
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & Precision & Recall & F1 & ROC-AUC & Fit s & Predict s \\
+\midrule
+Tree gini (ours) & 0.9198 & 0.9224 & 0.9211 & 0.9697 & 84.8345 & 0.0262 \\
+Tree gini (sklearn) & 0.9204 & 0.9224 & 0.9214 & 0.9696 & 0.2716 & 0.0027 \\
+Tree entropy (ours) & 0.9297 & 0.9063 & 0.9179 & 0.9741 & 76.2378 & 0.0284 \\
+Tree entropy (sklearn) & 0.9299 & 0.9061 & 0.9178 & 0.9748 & 0.2641 & 0.0030 \\
+Pegasos SVM (ours) & 0.8376 & 0.8206 & 0.8290 & 0.9262 & 3.4924 & 0.2695 \\
+SGD hinge (sklearn) & 0.8341 & 0.8185 & 0.8262 & 0.9202 & 1.0884 & 0.0966 \\
+SVC (sklearn, max 10k rows) & 0.8374 & 0.8365 & 0.8370 & 0.9317 & 1.8421 & 8.7526 \\
+\bottomrule
+\end{tabular}
