@@ -146,7 +146,25 @@ def train_val_test_split(X, y, val_size=0.15, test_size=0.15, seed=SEED):
     Deterministic split into train / validation / test.
     Return (X_tr, y_tr, X_val, y_val, X_te, y_te).
     """
-    raise NotImplementedError("TODO: split the data")
+    # First, separate the test set from the main dataset
+    X_tr_val, X_te, y_tr_val, y_te = sklearn_split(
+        X, y, test_size=test_size, random_state=seed, shuffle=True
+    )
+
+    # Calculate relative validation split ratio for the remaining train+val subset
+    val_relative_size = val_size / (1.0 - test_size)
+
+    # Split the train+val subset into final training and validation sets
+    X_tr, X_val, y_tr, y_val = sklearn_split(
+        X_tr_val, y_tr_val, test_size=val_relative_size, random_state=seed, shuffle=True
+    )
+
+    # Print summary statistics of split sizes
+    print(f"[Data Prep] Train split: {X_tr.shape[0]} samples")
+    print(f"[Data Prep] Validation split: {X_val.shape[0]} samples")
+    print(f"[Data Prep] Test split: {X_te.shape[0]} samples")
+
+    return X_tr, y_tr, X_val, y_val, X_te, y_te
 
 
 def standardize(X_tr, *others):
@@ -163,4 +181,11 @@ if __name__ == '__main__':
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
     X, y, features = make_features(cleaned_df)
-    y_tier, median_thresh = make_tier_label(y)
+
+    # Test dataset splitting
+    X_tr, y_tr, X_val, y_val, X_te, y_te = train_val_test_split(X, y)
+    
+    # Derive price-tier threshold strictly from training split
+    y_tr_tier, train_thresh = make_tier_label(y_tr)
+    y_val_tier, _ = make_tier_label(y_val, threshold=train_thresh)
+    y_te_tier, _ = make_tier_label(y_te, threshold=train_thresh)
