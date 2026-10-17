@@ -58,7 +58,7 @@ def load_raw(path: str = DATA_PATH):
     return df
 
 
-def clean(df):
+def clean(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean the raw frame:
       - fix dtypes (prices/areas to numeric; strip currency/text),
@@ -168,28 +168,42 @@ def make_tier_label(y_price, threshold=None):
     return y_tier, threshold
 
 
-def train_val_test_split(X, y, val_size=0.15, test_size=0.15, seed=SEED):
+def train_val_test_split(X, y, y_tier=None, val_size=0.15, test_size=0.15, seed=SEED):
     """
     Deterministic split into train / validation / test.
-    Return (X_tr, y_tr, X_val, y_val, X_te, y_te).
+    Supports stratified splitting on y_tier for Task B when provided.
+    Return (X_tr, y_tr, X_val, y_val, X_te, y_te, [y_tr_tier, y_val_tier, y_te_tier]).
     """
-    # First, separate the test set from the main dataset
+    stratify_target = y_tier if y_tier is not None else None
+
+    # First split off the test set (stratified if y_tier is provided)
     X_tr_val, X_te, y_tr_val, y_te = sklearn_split(
-        X, y, test_size=test_size, random_state=seed, shuffle=True
+        X, y, test_size=test_size, random_state=seed, shuffle=True, stratify=stratify_target
     )
 
-    # Calculate relative validation split ratio for the remaining train+val subset
+    if y_tier is not None:
+        y_tier_tr_val, y_tier_te = sklearn_split(
+            y_tier, test_size=test_size, random_state=seed, shuffle=True, stratify=y_tier
+        )
+
+    # Calculate relative validation size
     val_relative_size = val_size / (1.0 - test_size)
+    stratify_val = y_tier_tr_val if y_tier is not None else None
 
-    # Split the train+val subset into final training and validation sets
+    # Split remaining train+val set into final train and validation sets
     X_tr, X_val, y_tr, y_val = sklearn_split(
-        X_tr_val, y_tr_val, test_size=val_relative_size, random_state=seed, shuffle=True
+        X_tr_val, y_tr_val, test_size=val_relative_size, random_state=seed, shuffle=True, stratify=stratify_val
     )
 
-    # Print summary statistics of split sizes
     print(f"[Data Prep] Train split: {X_tr.shape[0]} samples")
     print(f"[Data Prep] Validation split: {X_val.shape[0]} samples")
     print(f"[Data Prep] Test split: {X_te.shape[0]} samples")
+
+    if y_tier is not None:
+        y_tier_tr, y_tier_val = sklearn_split(
+            y_tier_tr_val, test_size=val_relative_size, random_state=seed, shuffle=True, stratify=stratify_val
+        )
+        return X_tr, y_tr, X_val, y_val, X_te, y_te, y_tier_tr, y_tier_val, y_tier_te
 
     return X_tr, y_tr, X_val, y_val, X_te, y_te
 
