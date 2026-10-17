@@ -52,8 +52,8 @@ def plot_validation_curve(X_train, y_train, X_val, y_val):
     plt.savefig(plot_path)
     print(f"✅ Figure saved to: {plot_path}")
     plt.close()
-    
-    def compare_criteria(X_train, y_train, X_val, y_val):
+
+def compare_criteria(X_train, y_train, X_val, y_val):
     """Compare Gini vs Entropy criteria for classification."""
     print("\nComparing Gini vs Entropy criteria (max_depth=5):")
     for criterion in ["gini", "entropy"]:
