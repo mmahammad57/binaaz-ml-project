@@ -244,24 +244,14 @@ if __name__ == '__main__':
     y_tier_full, _ = make_tier_label(y)
 
     # Stratified split execution
-    (
-        X_tr,
-        y_tr,
-        X_val,
-        y_val,
-        X_te,
-        y_te,
-        y_tr_tier,
-        y_val_tier,
-        y_te_tier,
-    ) = train_val_test_split(X, y, y_tier=y_tier_full)
+    X_tr, y_tr, X_val, y_val, X_te, y_te, y_tr_tier, y_val_tier, y_te_tier = train_val_test_split(
+        X, y, y_tier=y_tier_full
+    )
 
     # Standardize features
     X_tr_sc, X_val_sc, X_te_sc = standardize(X_tr, X_val, X_te)
 
     # Verify no NaN values exist in design matrices
     assert not np.isnan(X_tr_sc).any(), "NaN values found in X_tr_sc!"
-    print(
-        "[Data Prep] Verification passed: Zero NaNs in final design matrices."
-    )
+    print("[Data Prep] Verification passed: Zero NaNs in final design matrices.")
     print("[Data Prep] Preprocessing pipeline self-test finished successfully.")
