@@ -35,6 +35,7 @@ Outputs
     report/figures/svm_linear_margin.{png,pdf}         margin width vs lambda
     report/figures/svm_<kernel>_final_convergence.{png,pdf}   final model only
     report/figures/svm_validation_f1.{png,pdf}         F1 vs lambda, linear and RFF per gamma
+    report/figures/slide_svm_validation_f1.png         the same figure at slide size (SLIDE_STYLE)
     results/svm_tuning/stability_check.csv             CV F1 of the max-F1 and chosen configs
     results/svm_final_config.json                      (read by src/benchmark.py)
 """
@@ -185,13 +186,22 @@ def _table(sweeps, scale):
 _INK, _MUTED, _GRID = "#1f1f1f", "#5f5f5f", "#e3e3e3"
 _SLOTS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100")
 _WIDTH, _FONT, _SMALL = 3.5, 9, 8.5
+# Sizes for plot_validation_f1: the report column, and the slide version used
+# by presentation/slides.tex (6 x 3.5 in, 16 pt text, thicker marks, legend
+# beside the axes so the plot keeps its height; PNG only).
+# tick_step labels every k-th grid lambda (None: matplotlib's choice); at 16 pt
+# all seven labels would overlap on the narrower slide axis.
+REPORT_STYLE = dict(width=_WIDTH, height=3.3, font=_FONT, small=_SMALL, line=1.5, marker=4, star=130,
+                    legend=dict(loc="outside lower center", ncols=2), tick_step=None, exts=("png", "pdf"))
+SLIDE_STYLE = dict(width=6.0, height=3.5, font=16, small=16, line=2.5, marker=7, star=360,
+                   legend=dict(loc="outside right center", ncols=1), tick_step=2, exts=("png",))
 
 
-def _figure(height=2.6):
+def _figure(height=2.6, width=_WIDTH, small=_SMALL):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    fig = Figure(figsize=(_WIDTH, height), layout="constrained")
+    fig = Figure(figsize=(width, height), layout="constrained")
     FigureCanvasAgg(fig)
     ax = fig.subplots()
     ax.grid(True, which="major", color=_GRID, linewidth=0.6)
@@ -199,15 +209,15 @@ def _figure(height=2.6):
     ax.spines[["top", "right"]].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(_MUTED)
-    ax.tick_params(colors=_MUTED, labelsize=_SMALL)
+    ax.tick_params(colors=_MUTED, labelsize=small)
     return fig, ax
 
 
-def _finish(fig, ax, stem, xlabel, ylabel):
-    ax.set_xlabel(xlabel, color=_INK, fontsize=_FONT)
-    ax.set_ylabel(ylabel, color=_INK, fontsize=_FONT)
+def _finish(fig, ax, stem, xlabel, ylabel, font=_FONT, exts=("png", "pdf")):
+    ax.set_xlabel(xlabel, color=_INK, fontsize=font)
+    ax.set_ylabel(ylabel, color=_INK, fontsize=font)
     paths = {}
-    for ext in ("png", "pdf"):
+    for ext in exts:
         paths[ext] = stem.with_suffix(f".{ext}")
         fig.savefig(paths[ext], dpi=300, facecolor="white")
     return paths
@@ -266,31 +276,35 @@ def plot_linear_sweep(sweep, final_kernel, out_dir):
     return paths
 
 
-def plot_validation_f1(table, chosen, final_kernel, out_dir):
+def plot_validation_f1(table, chosen, final_kernel, out_dir, stem="svm_validation_f1", style=REPORT_STYLE):
     """
     Validation F1 vs lambda for every swept configuration: the linear kernel
     and RFF at each gamma, from the sweep table. Stars mark the configuration
-    chosen per kernel (solid star: the final model).
+    chosen per kernel (solid star: the final model). `style` sets only sizes
+    (REPORT_STYLE or SLIDE_STYLE); the data and marks are the same.
     """
-    fig, ax = _figure(3.3)
+    s = style
+    fig, ax = _figure(s["height"], s["width"], s["small"])
     groups = [("Linear", table[table.kernel == "linear"])]
     groups += [(f"RFF, γ = {m:g}·scale", table[(table.kernel == "rff") & (table.gamma_x_scale == m)])
                for m in GAMMA_MULTIPLIERS]
     for (label, rows), color, marker in zip(groups, _SLOTS, "os^D"):
         rows = rows.sort_values("lambda_")
-        ax.plot(rows["lambda_"], rows["val_F1"], color=color, linewidth=1.5, marker=marker, markersize=4,
-                linestyle="-" if label == "Linear" else "--", label=label)
+        ax.plot(rows["lambda_"], rows["val_F1"], color=color, linewidth=s["line"], marker=marker,
+                markersize=s["marker"], linestyle="-" if label == "Linear" else "--", label=label)
     for kernel, row in chosen.items():
         final = kernel == final_kernel
-        ax.scatter([row["lambda_"]], [row["validation_score"]], marker="*", s=130, zorder=5,
+        ax.scatter([row["lambda_"]], [row["validation_score"]], marker="*", s=s["star"], zorder=5, clip_on=False,
                    facecolors=_INK if final else "none", edgecolors=_INK, linewidths=1,
                    label="Final model" if final else f"Chosen {KERNEL_LABEL[kernel]}")
     _lambda_axis(ax)
-    # Below the axes: inside, it would cover sweep points wherever they fall.
-    fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=_SMALL, labelcolor=_INK,
+    if s["tick_step"]:
+        ax.set_xticks(np.sort(table["lambda_"].unique())[::s["tick_step"]])
+    # Outside the axes (below in the report, beside on the slide): inside, it would cover sweep points.
+    fig.legend(**s["legend"], frameon=False, fontsize=s["small"], labelcolor=_INK,
                handlelength=1.5, columnspacing=1.0)
-    return {"svm_validation_f1": _finish(fig, ax, out_dir / "svm_validation_f1",
-                                         "Regularization λ", "Validation F1")}
+    return {stem: _finish(fig, ax, out_dir / stem, "Regularization λ", "Validation F1",
+                          font=s["font"], exts=s["exts"])}
 
 
 def plot_final_convergence(row, kernel, out_dir):
@@ -486,6 +500,8 @@ def run_tuning(quick: bool = False) -> dict:
     table = _table(sweeps, scale)
     table.to_csv(results_dir / "svm_tuning" / "sweep_table.csv", index=False)
     figure_paths.update(plot_validation_f1(table, best, final, figures_dir))
+    figure_paths.update(plot_validation_f1(table, best, final, figures_dir,
+                                           "slide_svm_validation_f1", SLIDE_STYLE))
 
     start = time.perf_counter()
     n_max, n_folds = (QUICK_STABILITY_ROWS, QUICK_STABILITY_FOLDS) if quick else (STABILITY_ROWS, STABILITY_FOLDS)

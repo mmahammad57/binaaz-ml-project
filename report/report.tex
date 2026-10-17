@@ -852,8 +852,9 @@ loading, cleaning, parsing of floor and land area, leakage removal,
 encoding, the stratified split and the training-only tier threshold.
 Ibrahim Aghazade implemented the from-scratch decision tree
 (\texttt{decision\_tree.py}) with Gini, entropy and MSE criteria, the four
-stopping parameters, node statistics and the scikit-learn match test, and
-the tree hyperparameter study. Sahib Aliyev implemented the Pegasos SVM
+stopping parameters, node statistics and the scikit-learn match test; the
+tree hyperparameter sweep was not completed, so the final tree uses a fixed
+configuration. Sahib Aliyev implemented the Pegasos SVM
 (\texttt{svm.py}) with margin, support vectors and random Fourier
 features, plus the sweep and plotting tools (\texttt{svm\_experiment.py},
 \texttt{svm\_plots.py}) and their tests. Khizri Sakhrayev implemented the
@@ -870,7 +871,8 @@ pipeline, and wrote and assembled the report.\par}
 Khizri Sakhrayev used Claude Code (Anthropic) to produce
 \texttt{evaluate.py}, \texttt{tests/test\_evaluate.py},
 \texttt{benchmark.py}, \texttt{svm\_tuning.py}, \texttt{analysis.py},
-\texttt{eda.py}, \texttt{splits.py}, \texttt{run\_all.py}, the README
+\texttt{eda.py}, \texttt{splits.py}, \texttt{tests/test\_splits.py},
+\texttt{run\_all.py}, the README
 and the text of this report, under his direction and review. Sahib Aliyev
 used Codex for the SVM implementation, random Fourier features, tuning and
 plotting helpers, tests and implementation documentation, as recorded in

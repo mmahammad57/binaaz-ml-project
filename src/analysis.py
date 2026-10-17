@@ -18,6 +18,7 @@ Outputs
     report/tables/results_headline.{csv,tex}     headline metrics, all models x both tasks
     report/tables/results_task_{a,b}.{csv,tex}   full results per task, test + CV (appendix)
     report/figures/*.{png,pdf}                   see the plot_* functions
+    report/figures/slide_error_vs_threshold_distance.png   slide version (SLIDE_STYLE)
     results/error_analysis.md                    tables + findings for the report
     results/error_analysis/*.csv                 every error table
     results/report_facts.csv                     setup constants and data facts quoted in the report
@@ -63,6 +64,12 @@ DIVERGING = {"positive": "#2a78d6", "negative": "#e34948"}     # blue <-> red pa
 # printed sizes; LaTeX scales 3.5 in to the 3.33 in column (x0.95).
 SINGLE, DOUBLE = 3.5, 7.0
 FONT, SMALL = 9, 8.5
+# Sizes for plot_threshold_distance: the report column, and the slide version
+# used by presentation/slides.tex (6 x 3.5 in, 16 pt text, thicker marks, and
+# no "(n=...)" tick line, which would overlap at 16 pt; PNG only).
+REPORT_STYLE = dict(size=(SINGLE, 2.5), font=FONT, small=SMALL, line=1.5, marker=4, counts=True,
+                    exts=("png", "pdf"))
+SLIDE_STYLE = dict(size=(6.0, 3.5), font=16, small=16, line=2.5, marker=7, counts=False, exts=("png",))
 
 CATEGORY_EN = {"Yeni tikili": "New build", "Köhnə tikili": "Old build",
                "Həyət evi/Bağ evi": "House / villa", "Ofis": "Office"}
@@ -190,7 +197,7 @@ def full_results_tables(tables):
 
 
 # --- Figure helpers -----------------------------------------------------------
-def _figure(ncols=1, size=(SINGLE, 2.6), **kwargs):
+def _figure(ncols=1, size=(SINGLE, 2.6), small=SMALL, **kwargs):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
@@ -205,27 +212,27 @@ def _figure(ncols=1, size=(SINGLE, 2.6), **kwargs):
         ax.spines[["top", "right"]].set_visible(False)
         for side in ("left", "bottom"):
             ax.spines[side].set_color(MUTED)
-        ax.tick_params(colors=MUTED, labelsize=SMALL)
+        ax.tick_params(colors=MUTED, labelsize=small)
     return fig, axes
 
 
-def _label(ax, title=None, xlabel=None, ylabel=None):
+def _label(ax, title=None, xlabel=None, ylabel=None, font=FONT):
     if title:
-        ax.set_title(title, fontsize=FONT, color=INK, loc="left")
+        ax.set_title(title, fontsize=font, color=INK, loc="left")
     if xlabel:
-        ax.set_xlabel(xlabel, color=INK, fontsize=FONT)
+        ax.set_xlabel(xlabel, color=INK, fontsize=font)
     if ylabel:
-        ax.set_ylabel(ylabel, color=INK, fontsize=FONT)
+        ax.set_ylabel(ylabel, color=INK, fontsize=font)
 
 
-def _legend(ax, loc, **kwargs):
-    ax.legend(loc=loc, frameon=False, fontsize=SMALL, labelcolor=INK, **kwargs)
+def _legend(ax, loc, small=SMALL, **kwargs):
+    ax.legend(loc=loc, frameon=False, fontsize=small, labelcolor=INK, **kwargs)
 
 
-def _save(fig, stem):
+def _save(fig, stem, exts=("png", "pdf")):
     """Save at the drawn size (no tight bbox); titles and notes live in the report captions."""
     paths = []
-    for ext in ("png", "pdf"):
+    for ext in exts:
         path = PATHS["figures"] / f"{stem}.{ext}"
         fig.savefig(path, dpi=300, facecolor="white")
         paths.append(path)
@@ -468,16 +475,28 @@ def plot_error_breakdowns(frame):
     paths += _save(fig, "analysis_error_by_price_decile")
 
     dist = errors_by(frame, "threshold_distance")
-    fig, (ax,) = _figure(size=(SINGLE, 2.5))
+    paths += plot_threshold_distance(dist)
+    paths += plot_threshold_distance(dist, "slide_error_vs_threshold_distance", SLIDE_STYLE)
+    return paths
+
+
+def plot_threshold_distance(dist, stem="analysis_error_vs_threshold_distance", style=REPORT_STYLE):
+    """
+    Task B error rate of our tree and SVM by distance from the tier threshold
+    (rows of errors_by(frame, "threshold_distance")). `style` sets only sizes
+    (REPORT_STYLE or SLIDE_STYLE); the data and marks are the same.
+    """
+    s = style
+    fig, (ax,) = _figure(size=s["size"], small=s["small"])
     x = np.arange(len(dist))
     for i, (col, label) in enumerate((("B error % tree", "Our tree (Gini)"),
                                       ("B error % SVM", "Our linear Pegasos SVM"))):
-        ax.plot(x, dist[col], color=SLOTS[i], linewidth=1.5, marker="os"[i], markersize=4, label=label)
-    ax.set_xticks(x, [f"{d}\n(n={n:,})" for d, n in zip(dist.index, dist["n test"])])
-    _legend(ax, "upper right")
-    _label(ax, None, "|price / threshold - 1|", "Error rate, %")
-    paths += _save(fig, "analysis_error_vs_threshold_distance")
-    return paths
+        ax.plot(x, dist[col], color=SLOTS[i], linewidth=s["line"], marker="os"[i], markersize=s["marker"],
+                label=label)
+    ax.set_xticks(x, [f"{d}\n(n={n:,})" if s["counts"] else d for d, n in zip(dist.index, dist["n test"])])
+    _legend(ax, "upper right", s["small"])
+    _label(ax, None, "|price / threshold - 1|", "Error rate, %", font=s["font"])
+    return _save(fig, stem, s["exts"])
 
 
 def worst_listings(frame, n=10):
@@ -884,7 +903,7 @@ def run_analysis(quick: bool = False) -> dict:
     write_markdown(markdown, frame, tables, svm_stats, worst, bullets, threshold)
 
     print("Wrote " + ", ".join(sorted({p.stem for p in figures}))
-          + f" (.png/.pdf) in {PATHS['figures'].relative_to(ROOT)}/")
+          + f" (.png/.pdf; slide_*: .png) in {PATHS['figures'].relative_to(ROOT)}/")
     print(f"Wrote {markdown.relative_to(ROOT)} and {PATHS['errors'].relative_to(ROOT)}/*.csv")
     print("\nFindings:\n" + "\n".join(f"- {b}" for b in bullets))
     print(f"\nDone in {time.perf_counter() - start:.1f}s")
