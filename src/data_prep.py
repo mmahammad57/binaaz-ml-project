@@ -8,6 +8,8 @@ calls these functions. Fix your random seed everywhere (see SEED).
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split as sklearn_split
 
 # --- Config -----------------------------------------------------------------
 SEED = 42
