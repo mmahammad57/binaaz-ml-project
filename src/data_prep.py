@@ -167,6 +167,12 @@ def make_features(df):
     y = df['price'].values.astype(np.float64)
     df_features = df.drop(columns=['price'])
 
+    # Presence flags: each column holds a single value or NaN, so get_dummies
+    # (drop_first=True) would drop it entirely. Encode 1 = present, 0 = NaN.
+    for col in ['repair', 'mortgage', 'bill_of_sale', 'vip', 'featured']:
+        if col in df_features.columns:
+            df_features[col] = df_features[col].notna().astype(int)
+
     # Categorical One-Hot Encoding (automatically finds and encodes all string/object columns)
     df_encoded = pd.get_dummies(df_features, drop_first=True)
 
