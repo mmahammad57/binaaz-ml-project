@@ -21,15 +21,20 @@ import numpy as np
 
 
 class Node:
-    """One node of the tree. Fill in the fields you need."""
+    """One node of the tree. Stores split information or leaf values."""
     def __init__(self):
         self.feature = None      # int: feature index to split on (internal)
         self.threshold = None    # float: split threshold (internal)
-        self.left = None         # Node
-        self.right = None        # Node
-        self.value = None        # leaf prediction (class label/proba or mean)
+        self.left = None         # Node: 
+        self.right = None        # Node: 
+        self.value = None        # leaf prediction (class proba array or mean float)
+        
+        # Added for P6 feature importance requirements
+        self.n_samples = None    # int: number of samples reaching this node
+        self.impurity = None     # float: impurity of this node
 
     def is_leaf(self) -> bool:
+        """Returns True if the node is a leaf (has no children)."""
         return self.left is None and self.right is None
 
 
@@ -138,6 +143,10 @@ class DecisionTree:
         """Recursively build the tree, respecting the stopping rules."""
         node = Node()
         n_samples = len(y)
+        
+        # Store node statistics for P6 feature importance
+        node.n_samples = n_samples
+        node.impurity = self._impurity(y)
         
         # Determine if node is pure (all samples have same target value)
         is_pure = len(np.unique(y)) == 1
