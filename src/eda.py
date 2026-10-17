@@ -48,7 +48,29 @@ def plot_price_distribution(cleaned_df: pd.DataFrame):
     print(f"[EDA] Saved figure: {fig_path}")
 
 
+def plot_area_vs_price(cleaned_df: pd.DataFrame):
+    """Plot relationship between property area (m²) and sale price."""
+    plt.figure(figsize=(7, 5))
+    sns.scatterplot(
+        data=cleaned_df,
+        x="Sahə",
+        y=cleaned_df["price"] / 1e3,
+        alpha=0.5,
+        color="teal",
+    )
+    plt.title("Property Area (m²) vs. Price (k AZN)")
+    plt.xlabel("Area (m²)")
+    plt.ylabel("Price (k AZN)")
+    plt.tight_layout()
+
+    fig_path = os.path.join(FIGURES_DIR, "area_vs_price.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print(f"[EDA] Saved figure: {fig_path}")
+
+
 if __name__ == "__main__":
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
     plot_price_distribution(cleaned_df)
+    plot_area_vs_price(cleaned_df)
