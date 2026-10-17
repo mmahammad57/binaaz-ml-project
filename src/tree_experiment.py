@@ -69,6 +69,24 @@ def plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir):
     _save(fig, figures_dir, "tree_depth_curves")
 
 
+TOLERANCE = 0.002   # validation-score tolerance of the selection rule
+
+
+def _select(rows, higher_is_better, simplicity):
+    """
+    Selection rule for one sweep step: find the best validation score among
+    `rows`, keep every row within TOLERANCE of it, and return the simplest of
+    those, i.e. the one with the smallest simplicity(row) (depth step: the
+    max_depth; leaf step: minus min_samples_leaf). Rows equally simple are
+    ordered by validation score.
+    """
+    scores = [r["Val_Metric"] for r in rows]
+    best = max(scores) if higher_is_better else min(scores)
+    close = [r for r in rows if abs(r["Val_Metric"] - best) <= TOLERANCE + 1e-12]
+    sign = -1 if higher_is_better else 1
+    return min(close, key=lambda r: (simplicity(r), sign * r["Val_Metric"]))
+
+
 def run(quick: bool = False):
     """
     Run hyperparameter sweeps for Task A and Task B on a stratified subsample.
@@ -135,8 +153,6 @@ def run(quick: bool = False):
     
     # --- TASK B: Classification (Price Tier) ---
     print("\nStarting Task B (Classification) sweep...")
-    best_b_val = -1.0
-    best_b_config = None
     task_b_curves = {"gini": {"train": [], "val": []}, "entropy": {"train": [], "val": []}}
     depths = [2, 4, 6, 8, 10, 12]
     
@@ -157,16 +173,14 @@ def run(quick: bool = False):
             task_b_curves[crit]["val"].append(val_f1)
             
             results_table.append({
-                "Task": "B_Classification", "Criterion": crit, "Max_Depth": d, "Min_Samples_Leaf": 1,
-                "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
+                "Task": "B_Classification", "Step": "depth", "Criterion": crit, "Max_Depth": d,
+                "Min_Samples_Leaf": 1, "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
             })
-            
-            if best_b_config is None or val_f1 > best_b_val + 0.002:
-                best_b_val = val_f1
-                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
-            elif abs(val_f1 - best_b_val) <= 0.002 and d < best_b_config["max_depth"]:
-                best_b_val = val_f1
-                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
+
+    depth_rows = [r for r in results_table if r["Task"] == "B_Classification"]
+    chosen = _select(depth_rows, higher_is_better=True, simplicity=lambda r: r["Max_Depth"])
+    best_b_config = {"criterion": chosen["Criterion"], "max_depth": chosen["Max_Depth"], "min_samples_leaf": 1}
+    leaf_rows = [chosen]
 
     print(f"Best Task B base config: {best_b_config}. Sweeping min_samples_leaf...")
     for msl in [5, 20, 50]:
@@ -182,22 +196,17 @@ def run(quick: bool = False):
         _, _, val_f1 = precision_recall_f1(y_val_tier, val_preds)
         
         results_table.append({
-            "Task": "B_Classification", "Criterion": best_b_config["criterion"], 
+            "Task": "B_Classification", "Step": "leaf", "Criterion": best_b_config["criterion"],
             "Max_Depth": best_b_config["max_depth"], "Min_Samples_Leaf": msl,
             "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
         })
-        
-        if val_f1 > best_b_val + 0.002:
-            best_b_val = val_f1
-            best_b_config["min_samples_leaf"] = msl
-        elif abs(val_f1 - best_b_val) <= 0.002 and msl > best_b_config["min_samples_leaf"]:
-            best_b_val = val_f1
-            best_b_config["min_samples_leaf"] = msl
+        leaf_rows.append(results_table[-1])
+
+    chosen = _select(leaf_rows, higher_is_better=True, simplicity=lambda r: -r["Min_Samples_Leaf"])
+    best_b_config["min_samples_leaf"] = chosen["Min_Samples_Leaf"]
 
     # --- TASK A: Regression (Log Price) ---
     print("\nStarting Task A (Regression) sweep...")
-    best_a_val = float('inf')
-    best_a_config = None
     task_a_curves = {"train": [], "val": []}
     
     for d in depths:
@@ -216,16 +225,14 @@ def run(quick: bool = False):
         task_a_curves["val"].append(val_rmse)
         
         results_table.append({
-            "Task": "A_Regression", "Criterion": "mse", "Max_Depth": d, "Min_Samples_Leaf": 1,
-            "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
+            "Task": "A_Regression", "Step": "depth", "Criterion": "mse", "Max_Depth": d,
+            "Min_Samples_Leaf": 1, "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
         })
-        
-        if best_a_config is None or val_rmse < best_a_val - 0.002:
-            best_a_val = val_rmse
-            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
-        elif abs(val_rmse - best_a_val) <= 0.002 and d < best_a_config["max_depth"]:
-            best_a_val = val_rmse
-            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
+
+    depth_rows = [r for r in results_table if r["Task"] == "A_Regression"]
+    chosen = _select(depth_rows, higher_is_better=False, simplicity=lambda r: r["Max_Depth"])
+    best_a_config = {"max_depth": chosen["Max_Depth"], "min_samples_leaf": 1}
+    leaf_rows = [chosen]
 
     print(f"Best Task A base config: {best_a_config}. Sweeping min_samples_leaf...")
     for msl in [5, 20, 50]:
@@ -241,21 +248,20 @@ def run(quick: bool = False):
         val_rmse = rmse(y_val_log, val_preds)
         
         results_table.append({
-            "Task": "A_Regression", "Criterion": "mse", 
+            "Task": "A_Regression", "Step": "leaf", "Criterion": "mse",
             "Max_Depth": best_a_config["max_depth"], "Min_Samples_Leaf": msl,
             "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
         })
-        
-        if val_rmse < best_a_val - 0.002:
-            best_a_val = val_rmse
-            best_a_config["min_samples_leaf"] = msl
-        elif abs(val_rmse - best_a_val) <= 0.002 and msl > best_a_config["min_samples_leaf"]:
-            best_a_val = val_rmse
-            best_a_config["min_samples_leaf"] = msl
+        leaf_rows.append(results_table[-1])
+
+    chosen = _select(leaf_rows, higher_is_better=False, simplicity=lambda r: -r["Min_Samples_Leaf"])
+    best_a_config["min_samples_leaf"] = chosen["Min_Samples_Leaf"]
 
     # --- OUTPUTS (JSON/CSV) ---
     print("\n--- Final Selected Configurations ---")
-    selection_rule = "Selection rule: best validation metric. If within 0.002, choose smaller max_depth, then larger min_samples_leaf."
+    selection_rule = (f"In each sweep step, the best validation score (Task A: RMSE of log price, lower is better; "
+                      f"Task B: F1, higher is better); among all configs within {TOLERANCE} of it, the smallest "
+                      "max_depth (depth step) or the largest min_samples_leaf (leaf step).")
     print(selection_rule)
     
     df_results = pd.DataFrame(results_table)
