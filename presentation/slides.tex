@@ -1,0 +1,231 @@
+% =====================================================================
+%  MLE-AI-201 Machine Learning -- Final Project demo slides (10 minutes)
+%
+%  Build:   tectonic slides.tex      (from presentation/)
+%
+%  Every number is the one printed in report/report.tex and comes from the
+%  same file in results/; each is followed by a "% src:" comment naming that
+%  file and the row/column (or key). The two figures are slide versions
+%  (6 x 3.5 in, 16 pt) drawn by the report's plotting code from the same
+%  data: report/figures/slide_*.png (svm_tuning.py, analysis.py SLIDE_STYLE).
+%  Body text is 14 pt (class option); only sub- and superscripts are smaller.
+% =====================================================================
+\documentclass[14pt,aspectratio=169]{beamer}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\graphicspath{{../report/figures/}}
+
+% ---- Clean minimal theme ---------------------------------------------
+\definecolor{ink}{HTML}{1F2933}
+\definecolor{accent}{HTML}{1F5FA8}
+\definecolor{muted}{HTML}{52606D}
+\setbeamercolor{normal text}{fg=ink,bg=white}
+\setbeamercolor{frametitle}{fg=accent,bg=white}
+\setbeamercolor{framesubtitle}{fg=muted}
+\setbeamercolor{itemize item}{fg=accent}
+\setbeamercolor{structure}{fg=accent}
+\setbeamerfont{frametitle}{size=\Large,series=\bfseries}
+\setbeamerfont{framesubtitle}{size=\normalsize,series=\mdseries,shape=\itshape}
+\setbeamerfont{itemize/enumerate body}{size=\normalsize}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{}
+\setbeamertemplate{itemize items}[circle]
+\setbeamersize{text margin left=8mm,text margin right=8mm}
+\setlength{\leftmargini}{1.1em}
+\newcommand{\presenter}[1]{\framesubtitle{Presenter: #1}}
+\newcommand{\gap}{\setlength{\itemsep}{0.45em}}
+\AtBeginDocument{\setlength{\abovedisplayskip}{4pt}\setlength{\belowdisplayskip}{4pt}}
+
+\begin{document}
+
+% =====================================================================
+% 1. Title
+\begin{frame}[plain]
+  \centering
+  \vfill
+  {\Large\bfseries\color{accent}
+    Pricing Baku Real Estate from Scratch:\\[0.15em]
+    Decision Trees and Pegasos SVMs\\[0.15em]
+    on bina.az Listings\par}
+  \vspace{1.1em}
+  Aghazade, Ibrahim\quad Aliyev, Sahib\\
+  Mammadli, Mahammad\quad Sakhrayev, Khizri\par
+  \vspace{0.9em}
+  {\itshape\color{muted}MLE-AI-201 Machine Learning ---\\
+    AI Academy, National Artificial Intelligence Center\par}
+  \vspace{0.9em}
+  \texttt{github.com/mmahammad57/binaaz-ml-project}\par
+  \vfill
+\end{frame}
+
+% =====================================================================
+% 2. Problem and dataset
+\begin{frame}{Problem and dataset}
+  \begin{itemize}\gap
+    \item bina.az, a property portal for Azerbaijan: Kaggle collection of
+      100{,}775 sale listings, 51 columns % src: results/report_facts.csv [raw_rows, raw_columns]
+    \item 91{,}314 listings after cleaning, 171 features % src: results/report_facts.csv [rows_clean, n_features]
+    \item \textbf{Task A:} regress $\log(\text{price})$; skewness 6.00 $\to$ 0.28 % src: results/eda_summary.csv [price_skew 6.0001, log_price_skew 0.2794]
+    \item \textbf{Task B:} premium if price $\ge$ 215{,}000~AZN, else standard % src: results/report_facts.csv [tier_threshold_train_median]
+    \item Threshold = median \emph{training} price; validation and test
+      reuse it: 50.3\,\% premium in every split % src: results/report_facts.csv [premium_share_train, _val, _test 0.5027]
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 3. Data cleaning and leakage
+\begin{frame}{Data cleaning and leakage}
+  \presenter{Mahammad Mammadli}
+  \begin{itemize}\gap
+    \item Rows removed: 9{,}412 missing price, area or rooms; % src: results/report_facts.csv [rows_removed_missing]
+      4 duplicates; % src: results/report_facts.csv [rows_removed_duplicates]
+      45 outliers outside 10k--5M~AZN or 10--2{,}000~m\textsuperscript{2} % src: results/report_facts.csv [rows_removed_outliers]; data_prep.py:clean (step 6)
+    \item 30 columns dropped: \texttt{unit\_price} and \texttt{total\_price} % src: results/report_facts.csv [dropped_columns]
+      give the price away; IDs, URLs, times, sellers and free text identify listings % src: data_prep.py:LEAKAGE_COLUMNS
+    \item Floor ``$k$ / $m$'' split into floor, storeys and \texttt{has\_floor}; land area parsed from ``sot'' % src: data_prep.py:clean (steps 2-3)
+    \item 5 flag columns encoded 1 = present, 0 = missing % src: results/report_facts.csv [n_flag_features]; data_prep.py:make_features
+    \item Seeded, stratified 70/15/15 split: 63{,}919 / 13{,}697 / 13{,}698, % src: results/report_facts.csv [n_train, n_val, n_test]
+      one \texttt{get\_splits()} for every stage % src: splits.py:get_splits; tests/test_splits.py
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 4. Decision tree
+\begin{frame}{Decision tree from scratch}
+  \presenter{Ibrahim Aghazade}
+  \begin{itemize}\gap
+    \item Gini or entropy (Task B), variance (Task A); split gain % src: decision_tree.py:DecisionTree._impurity
+      \[\Delta = I(S) - \frac{|S_L|}{|S|} I(S_L) - \frac{|S_R|}{|S|} I(S_R)\]
+    \item Search: every feature, every \emph{observed} value as threshold;
+      largest $\Delta$ wins % src: decision_tree.py:DecisionTree._best_split
+    \item Stop: pure node, max.\ depth, min.\ rows to split, % src: decision_tree.py:DecisionTree._grow, _best_split
+      min.\ rows per leaf, min.\ gain: fixed at 10 / 10 / 5 / 0 % src: results/report_facts.csv [tree_task_b_max_depth, _min_samples_split, _min_samples_leaf]; decision_tree.py default 0.0
+    \item Matches scikit-learn: Task B 464 vs 462 leaves, % src: results/tree_comparison.csv [Task B gini, leaves ours/sklearn]
+      99.9\,\% of test labels agree; % src: results/tree_comparison.csv [Task B gini, test agreement % 99.89]
+      Task A predictions correlate 0.9989 % src: results/tree_comparison.csv [Task A tree, pred corr 0.99886]
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 5. Pegasos SVM
+\begin{frame}{Pegasos SVM from scratch}
+  \presenter{Sahib Aliyev}
+  \begin{itemize}\gap
+    \item Objective, labels $\pm 1$: % src: svm.py:PegasosSVM._record_objective
+      \[J(\mathbf{w},b)=\frac{\lambda}{2}\lVert\mathbf{w}\rVert^{2}
+        +\frac{1}{n}\textstyle\sum_i\max\!\big(0,\,1-y_i(\mathbf{w}^{\top}\mathbf{x}_i+b)\big)\]
+    \item One random example per step, $\eta_t = 1/(\lambda t)$, then % src: svm.py:PegasosSVM._fit_features
+      project $\mathbf{w}$ onto $\lVert\mathbf{w}\rVert \le 1/\sqrt{\lambda}$: % src: svm.py:PegasosSVM._fit_features (radius = 1/sqrt(lambda_))
+      \[\mathbf{w} \leftarrow (1 - \eta_t\lambda)\,\mathbf{w}
+        + \eta_t\,\mathbf{1}\!\left[y_i(\mathbf{w}^\top\mathbf{x}_i + b) < 1\right] y_i\mathbf{x}_i\]
+    \item Margin $2/\lVert\mathbf{w}\rVert$; support vectors: rows with
+      $y_i(\mathbf{w}^\top\mathbf{x}_i + b) \le 1$ % src: svm.py:PegasosSVM._fit_features (support_)
+    \item RFF, $D = 500$: % src: results/report_facts.csv [svm_rff_n_components]
+      256~MB instead of a 32.7~GB kernel matrix % src: results/report_facts.csv [rff_matrix_mb 255.7, kernel_matrix_gb 32.69]
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 6. Tuning
+\begin{frame}{Tuning the SVMs on validation}
+  \begin{columns}[c,onlytextwidth]
+    \begin{column}{0.58\textwidth}
+      \includegraphics[width=\linewidth]{slide_svm_validation_f1.png}\\[0.2em]
+      7 $\lambda$ from $10^{-7}$ to $10^{-1}$; scale $= 1/171$ % src: results/report_facts.csv [svm_grid_n_lambdas, svm_grid_lambda_min, svm_grid_lambda_max, n_features]
+    \end{column}
+    \begin{column}{0.40\textwidth}
+      \begin{itemize}\gap
+        \item Rule: within 0.005 of the best F1, largest $\lambda$ % src: results/svm_tuning/stability_check.csv [f1_tolerance]; svm_tuning.py:_select_stable
+        \item Final: linear, $\lambda = 10^{-3}$, F1 0.904, % src: results/report_facts.csv [svm_final_kernel]; results/svm_tuning/stability_check.csv [linear, lambda_ 0.001, val_F1 0.9037]
+          CV $0.897 \pm 0.003$ % src: results/svm_tuning/stability_check.csv [linear, cv_F1_mean 0.8970, cv_F1_std 0.0031]
+        \item RFF, $\lambda = 10^{-6}$: F1 0.903, % src: results/svm_tuning/stability_check.csv [rff, lambda_ 1e-06, val_F1 0.9027]
+          CV $0.763 \pm 0.095$ % src: results/svm_tuning/stability_check.csv [rff, cv_F1_mean 0.7632, cv_F1_std 0.0954]
+        \item It needs $10^6$ updates; a CV fold gives 320{,}000 % src: results/svm_tuning/stability_check.csv [rff, one_over_lambda 1e6, updates_per_fit 320000]
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% =====================================================================
+% 7. Benchmark
+\begin{frame}{Benchmark against scikit-learn (test set)}
+  \presenter{Khizri Sakhrayev}
+  \begin{itemize}\gap
+    \item Task A, $R^2$ on log price: ours 0.853, % src: results/benchmark_test_task_a.csv [Tree (ours), R2 log 0.8531]
+      scikit-learn 0.852 % src: results/benchmark_test_task_a.csv [Tree (sklearn), R2 log 0.8522]
+  \end{itemize}
+  \vspace{0.3em}
+  \centering
+  \begin{tabular}{@{}lccr@{}}
+    \toprule
+    Task B & F1 & F1, CV & Fit (s) \\
+    \midrule
+    Tree Gini (ours)    & 0.926 & $0.907 \pm 0.006$ & 86.8 \\ % src: results/benchmark_test_task_b.csv [Tree gini (ours), F1 0.9258, Fit s 86.7520]; results/benchmark_cv_task_b.csv [F1 0.9069 ± 0.0060]
+    Tree Gini (sklearn) & 0.926 & $0.907 \pm 0.006$ & 0.31 \\ % src: results/benchmark_test_task_b.csv [Tree gini (sklearn), F1 0.9256, Fit s 0.3128]; results/benchmark_cv_task_b.csv [F1 0.9071 ± 0.0061]
+    Pegasos linear (ours) & 0.904 & $0.897 \pm 0.003$ & 2.7 \\ % src: results/benchmark_test_task_b.csv [Pegasos linear (ours), F1 0.9040, Fit s 2.6653]; results/benchmark_cv_task_b.csv [F1 0.8970 ± 0.0031]
+    SGD hinge (sklearn) & 0.905 & $0.894 \pm 0.004$ & 0.29 \\ % src: results/benchmark_test_task_b.csv [SGD hinge linear (sklearn), F1 0.9052, Fit s 0.2875]; results/benchmark_cv_task_b.csv [F1 0.8943 ± 0.0036]
+    \bottomrule
+  \end{tabular}
+  \raggedright
+  \begin{itemize}\gap
+    \item Our tree: 277$\times$ slower; fit time grows $\times$15.0 (ours) % src: 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+      vs $\times$10.4 (sklearn) from 2k to 16k rows % src: results/benchmark_scaling.csv [Tree gini (ours) 10.3910 / 0.6940; Tree gini (sklearn) 0.06312 / 0.006055]
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 8. Error analysis
+\begin{frame}{Where the models fail}
+  \begin{columns}[c,onlytextwidth]
+    \begin{column}{0.53\textwidth}
+      \includegraphics[width=\linewidth]{slide_error_vs_threshold_distance.png}\\[0.2em]
+      Task B error by distance from the threshold
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \begin{itemize}\gap
+        \item Within 5\,\% of the 215{,}000~AZN threshold: % src: results/report_facts.csv [tier_threshold_train_median]
+          tree 32.3\,\%, SVM 42.8\,\% wrong % src: results/error_analysis.md [Task B: distance from the tier threshold, 0-5%, B error % tree 32.31, SVM 42.81]
+        \item That band holds 28\,\% of tree errors % src: results/error_analysis.md [Findings, bullet 5]
+        \item Task A median error: 14.3\,\% cheapest, 19.6\,\% dearest decile % src: results/error_analysis.md [By true-price decile, A MdAPE %, D1 14.27, D10 19.64]
+        \item Districts with 1--49 vs 1{,}000+ training rows: 20.0 vs 11.4\,\% % src: results/error_analysis.md [By district size, A MdAPE %, 1-49 20.03, >= 1000 11.35]
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% =====================================================================
+% 9. Limitations
+\begin{frame}{Limitations and honest notes}
+  \begin{itemize}\gap
+    \item Trees not tuned: fixed 10 / 10 / 5, while the SVMs were tuned % src: results/report_facts.csv [tree_task_*_max_depth, _min_samples_split, _min_samples_leaf, tree_task_*_source]
+    \item RFF Pegasos is unstable on less data: CV F1 $0.763 \pm 0.095$ % src: results/benchmark_cv_task_b.csv [Pegasos RFF (ours), F1 0.7632 ± 0.0954]
+    \item CV on 20{,}000 of 77{,}616 rows, because our tree is 277$\times$ slower % src: results/report_facts.csv [cv_rows, cv_pool_rows]; 86.7520 / 0.3128 from results/benchmark_test_task_b.csv
+    \item One-hot built on all rows: 2 columns all-zero in training % src: results/report_facts.csv [onehot_all_zero_in_train = 2]
+    \item 0 means ``not applicable'': floor for 15{,}338 listings, % src: results/report_facts.csv [rows_no_floor_filled_0]
+      land area for 76{,}126 % src: results/report_facts.csv [rows_land_area_filled_0]
+  \end{itemize}
+\end{frame}
+
+% =====================================================================
+% 10. Contributions and next steps
+\begin{frame}{Contributions and next steps}
+  \begin{tabular}{@{}l@{\quad}l@{}}
+    Mahammad Mammadli & data pipeline: cleaning, leakage, split \\
+    Ibrahim Aghazade  & decision tree and its scikit-learn test \\
+    Sahib Aliyev      & Pegasos SVM, RFF, sweep and plot tools \\
+    Khizri Sakhrayev  & metrics, benchmark, tuning, analysis, report \\
+  \end{tabular}
+  \vspace{0.6em}
+  \begin{itemize}\gap
+    \item Faster split search: sorted values with running sums
+    \item Then a real tree sweep; bagging or boosting of our trees
+    \item Location features: distance to the centre, district statistics
+  \end{itemize}
+\end{frame}
+
+\end{document}
