@@ -52,3 +52,20 @@ def plot_validation_curve(X_train, y_train, X_val, y_val):
     plt.savefig(plot_path)
     print(f"✅ Figure saved to: {plot_path}")
     plt.close()
+    
+    def compare_criteria(X_train, y_train, X_val, y_val):
+    """Compare Gini vs Entropy criteria for classification."""
+    print("\nComparing Gini vs Entropy criteria (max_depth=5):")
+    for criterion in ["gini", "entropy"]:
+        tree = DecisionTree(task="classification", criterion=criterion, max_depth=5, random_state=42)
+        tree.fit(X_train, y_train)
+        val_preds = tree.predict(X_val)
+        acc = accuracy_score(y_val, val_preds)
+        print(f"Criterion: {criterion.capitalize():7s} | Validation Accuracy: {acc:.4f}")
+
+if __name__ == "__main__":
+    print("Loading data for experiments...")
+    X_train, X_val, y_train, y_val = generate_dummy_data()
+    
+    plot_validation_curve(X_train, y_train, X_val, y_val)
+    compare_criteria(X_train, y_train, X_val, y_val)
