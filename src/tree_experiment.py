@@ -8,12 +8,66 @@ import time
 import json
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from src.decision_tree import DecisionTree
 from src.splits import get_splits
 from src.evaluate import rmse, precision_recall_f1
 import src.data_prep as data_prep
+
+# Figure conventions shared with svm_tuning.py and analysis.py: palette slots
+# in a fixed order, recessive grid, text in ink colours, drawn at the printed
+# size with explicit 8.5-9 pt fonts (no global matplotlib settings).
+INK, MUTED, GRID = "#1f1f1f", "#5f5f5f", "#e3e3e3"
+SLOTS = ("#2a78d6", "#eb6834")
+FONT, SMALL = 9, 8.5
+
+
+def _figure(size, nrows=1, ncols=1):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=size, layout="constrained")
+    FigureCanvasAgg(fig)
+    axes = np.atleast_1d(fig.subplots(nrows, ncols)).ravel()
+    for ax in axes:
+        ax.grid(True, color=GRID, linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(MUTED)
+        ax.tick_params(colors=MUTED, labelsize=SMALL)
+    return fig, axes
+
+
+def _label(ax, title, xlabel, ylabel):
+    ax.set_title(title, fontsize=FONT, color=INK, loc="left")
+    ax.set_xlabel(xlabel, fontsize=FONT, color=INK)
+    ax.set_ylabel(ylabel, fontsize=FONT, color=INK)
+    ax.legend(frameon=False, fontsize=SMALL, labelcolor=INK)
+
+
+def _save(fig, figures_dir, stem):
+    for ext in ("png", "pdf"):
+        fig.savefig(os.path.join(figures_dir, f"{stem}.{ext}"), dpi=300, facecolor="white")
+
+
+def plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir):
+    """Train (dashed) and validation (solid) score against max_depth, min_samples_leaf = 1."""
+    fig, (ax1, ax2) = _figure((7.0, 2.6), ncols=2)
+    ax1.plot(depths, task_a_curves["train"], color=SLOTS[0], linewidth=1.5, linestyle="--", label="Train")
+    ax1.plot(depths, task_a_curves["val"], color=SLOTS[0], linewidth=1.5, marker="o", markersize=4,
+             label="Validation")
+    _label(ax1, "Task A: regression tree", "max_depth", "RMSE (log price)")
+    for crit, color, marker in (("gini", SLOTS[0], "o"), ("entropy", SLOTS[1], "s")):
+        ax2.plot(depths, task_b_curves[crit]["train"], color=color, linewidth=1.5, linestyle="--",
+                 label=f"Train, {crit}")
+        ax2.plot(depths, task_b_curves[crit]["val"], color=color, linewidth=1.5, marker=marker, markersize=4,
+                 label=f"Validation, {crit}")
+    _label(ax2, "Task B: classification tree", "max_depth", "F1 (premium)")
+    for ax in (ax1, ax2):
+        ax.set_xticks(depths)
+    _save(fig, figures_dir, "tree_depth_curves")
+
 
 def run(quick: bool = False):
     """
@@ -228,31 +282,7 @@ def run(quick: bool = False):
         json.dump(selection_info, f, indent=4)
         
     # --- FIGURES (Part 3) ---
-    plt.rcParams.update({'font.size': 8})
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.5))
-    
-    ax1.plot(depths, task_a_curves["train"], label='Train RMSE', marker='o')
-    ax1.plot(depths, task_a_curves["val"], label='Val RMSE', marker='s')
-    ax1.set_xlabel("Max Depth")
-    ax1.set_ylabel("RMSE (Log Price)")
-    ax1.set_title("Task A: Depth Curve")
-    ax1.legend()
-    ax1.grid(True)
-    
-    ax2.plot(depths, task_b_curves["gini"]["train"], 'b--', label='Train F1 (Gini)', alpha=0.5)
-    ax2.plot(depths, task_b_curves["gini"]["val"], 'b-', label='Val F1 (Gini)', marker='s')
-    ax2.plot(depths, task_b_curves["entropy"]["train"], 'g--', label='Train F1 (Entropy)', alpha=0.5)
-    ax2.plot(depths, task_b_curves["entropy"]["val"], 'g-', label='Val F1 (Entropy)', marker='^')
-    ax2.set_xlabel("Max Depth")
-    ax2.set_ylabel("F1 Score")
-    ax2.set_title("Task B: Depth Curve")
-    ax2.legend()
-    ax2.grid(True)
-    
-    plt.tight_layout()
-    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.png"), dpi=300)
-    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.pdf"))
-    plt.close()
+    plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir)
     print(f"Figures saved to {figures_dir}")
 
 if __name__ == "__main__":
