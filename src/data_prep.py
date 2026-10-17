@@ -174,18 +174,40 @@ def standardize(X_tr, *others):
     Return the scaled arrays in the same order as given.
     (Needed for the SVM; trees don't require it.)
     """
-    raise NotImplementedError("TODO: standardize using train stats")
+    # Calculate mean and standard deviation strictly from training set features
+    mean = np.mean(X_tr, axis=0)
+    std = np.std(X_tr, axis=0)
+
+    # Prevent zero-division for constant features across samples
+    std[std == 0.0] = 1.0
+
+    # Scale the training features
+    X_tr_scaled = (X_tr - mean) / std
+
+    # Apply the exact same training mean and std to validation and test sets
+    others_scaled = [(X - mean) / std for X in others]
+
+    if others_scaled:
+        return (X_tr_scaled, *others_scaled)
+    return X_tr_scaled
 
 
 if __name__ == '__main__':
+    # 1. Load and clean raw dataset
     raw_df = load_raw()
     cleaned_df = clean(raw_df)
+
+    # 2. Extract feature matrix X and target y
     X, y, features = make_features(cleaned_df)
 
-    # Test dataset splitting
+    # 3. Partition dataset into train, validation, and test splits
     X_tr, y_tr, X_val, y_val, X_te, y_te = train_val_test_split(X, y)
-    
-    # Derive price-tier threshold strictly from training split
+
+    # 4. Generate binary price-tier classification labels strictly using Train median
     y_tr_tier, train_thresh = make_tier_label(y_tr)
     y_val_tier, _ = make_tier_label(y_val, threshold=train_thresh)
     y_te_tier, _ = make_tier_label(y_te, threshold=train_thresh)
+
+    # 5. Standardize feature splits using Train mean and std
+    X_tr_sc, X_val_sc, X_te_sc = standardize(X_tr, X_val, X_te)
+    print("[Data Prep] Preprocessing pipeline self-test finished successfully.")
