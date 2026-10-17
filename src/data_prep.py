@@ -1,7 +1,7 @@
 """
 data_prep.py — loading, cleaning, splitting, and the price-tier label.
 
-Fill in the TODOs. Keep ALL data wrangling here so the rest of the code just
+Keep ALL data wrangling here so the rest of the code just
 calls these functions. Fix your random seed everywhere (see SEED).
 """
 
@@ -16,7 +16,6 @@ SEED = 42
 DATA_PATH = "data/bina_az_sale.csv"   # change if your filename differs
 
 # Columns that LEAK the target (derived from price). Drop these before training.
-# TODO: list the actual leakage columns you find (e.g. a unit/per-m2 price).
 LEAKAGE_COLUMNS: list[str] = [
     "unit_price",
     "total_price",
