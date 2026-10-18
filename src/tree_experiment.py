@@ -8,25 +8,146 @@ import time
 import json
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from src.decision_tree import DecisionTree
 from src.splits import get_splits
 from src.evaluate import rmse, precision_recall_f1
 import src.data_prep as data_prep
 
-def run(quick: bool = False):
+# Figure conventions shared with svm_tuning.py and analysis.py: palette slots
+# in a fixed order, recessive grid, text in ink colours, drawn at the printed
+# size with explicit 8.5-9 pt fonts (no global matplotlib settings).
+INK, MUTED, GRID = "#1f1f1f", "#5f5f5f", "#e3e3e3"
+SLOTS = ("#2a78d6", "#eb6834")
+FONT, SMALL = 9, 8.5
+
+
+def _figure(size, nrows=1, ncols=1):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=size, layout="constrained")
+    FigureCanvasAgg(fig)
+    axes = np.atleast_1d(fig.subplots(nrows, ncols)).ravel()
+    for ax in axes:
+        ax.grid(True, color=GRID, linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(MUTED)
+        ax.tick_params(colors=MUTED, labelsize=SMALL)
+    return fig, axes
+
+
+def _label(ax, title, xlabel, ylabel):
+    ax.set_title(title, fontsize=FONT, color=INK, loc="left")
+    ax.set_xlabel(xlabel, fontsize=FONT, color=INK)
+    ax.set_ylabel(ylabel, fontsize=FONT, color=INK)
+    ax.legend(frameon=False, fontsize=SMALL, labelcolor=INK)
+
+
+def _save(fig, figures_dir, stem):
+    for ext in ("png", "pdf"):
+        fig.savefig(os.path.join(figures_dir, f"{stem}.{ext}"), dpi=300, facecolor="white")
+
+
+def plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir):
+    """Train (dashed) and validation (solid) score against max_depth, min_samples_leaf = 1."""
+    fig, (ax1, ax2) = _figure((7.0, 2.6), ncols=2)
+    ax1.plot(depths, task_a_curves["train"], color=SLOTS[0], linewidth=1.5, linestyle="--", label="Train")
+    ax1.plot(depths, task_a_curves["val"], color=SLOTS[0], linewidth=1.5, marker="o", markersize=4,
+             label="Validation")
+    _label(ax1, "Task A: regression tree", "max_depth", "RMSE (log price)")
+    for crit, color, marker in (("gini", SLOTS[0], "o"), ("entropy", SLOTS[1], "s")):
+        ax2.plot(depths, task_b_curves[crit]["train"], color=color, linewidth=1.5, linestyle="--",
+                 label=f"Train, {crit}")
+        ax2.plot(depths, task_b_curves[crit]["val"], color=color, linewidth=1.5, marker=marker, markersize=4,
+                 label=f"Validation, {crit}")
+    _label(ax2, "Task B: classification tree", "max_depth", "F1 (premium)")
+    for ax in (ax1, ax2):
+        ax.set_xticks(depths)
+    _save(fig, figures_dir, "tree_depth_curves")
+
+
+def plot_slide_depth_curves(depths, task_b_curves, figures_dir):
+    """
+    Slide version (presentation/slides.tex) of the Task B panel of
+    tree_depth_curves: 6 x 3.5 in, 16 pt text, thicker marks, legend beside
+    the axes as in svm_tuning.SLIDE_STYLE; PNG only.
+    """
+    fig, (ax,) = _figure((6.0, 3.5))
+    ax.tick_params(labelsize=16)
+    for crit, color, marker in (("gini", SLOTS[0], "o"), ("entropy", SLOTS[1], "s")):
+        ax.plot(depths, task_b_curves[crit]["val"], color=color, linewidth=2.5, marker=marker, markersize=7,
+                label=f"Validation, {crit}")
+        ax.plot(depths, task_b_curves[crit]["train"], color=color, linewidth=2.5, linestyle="--",
+                label=f"Train, {crit}")
+    ax.set_xticks(depths)
+    ax.set_xlabel("max_depth", fontsize=16, color=INK)
+    ax.set_ylabel("Task B F1", fontsize=16, color=INK)
+    fig.legend(loc="outside right center", frameon=False, fontsize=16, labelcolor=INK, handlelength=1.5)
+    fig.savefig(os.path.join(figures_dir, "slide_tree_depth_curves.png"), dpi=300, facecolor="white")
+
+
+def plot_learning_curve(curve, configs, figures_dir):
+    """
+    Train (dashed) and validation (solid) score of the chosen configs against
+    the number of training rows; one panel per task, one report column wide.
+    """
+    fig, axes = _figure((3.5, 4.4), nrows=2)
+    panels = (("A_Regression", "Task A", "RMSE (log price)", configs["A"]),
+              ("B_Classification", "Task B", "F1 (premium)", configs["B"]))
+    for ax, (task, name, ylabel, cfg) in zip(axes, panels):
+        rows = curve[curve["Task"] == task]
+        ax.plot(rows["Train_Size"], rows["Train_Metric"], color=SLOTS[0], linewidth=1.5, linestyle="--",
+                label="Train")
+        ax.plot(rows["Train_Size"], rows["Val_Metric"], color=SLOTS[0], linewidth=1.5, marker="o",
+                markersize=4, label="Validation")
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(rows["Train_Size"], [f"{k / 1000:g}k" for k in rows["Train_Size"]])
+        ax.minorticks_off()
+        _label(ax, f"{name}: {cfg}", "Training rows", ylabel)
+    _save(fig, figures_dir, "tree_learning_curve")
+
+
+TOLERANCE = 0.002   # validation-score tolerance of the selection rule
+
+
+def _select(rows, higher_is_better, simplicity):
+    """
+    Selection rule for one sweep step: find the best validation score among
+    `rows`, keep every row within TOLERANCE of it, and return the simplest of
+    those, i.e. the one with the smallest simplicity(row) (depth step: the
+    max_depth; leaf step: minus min_samples_leaf). Rows equally simple are
+    ordered by validation score.
+    """
+    scores = [r["Val_Metric"] for r in rows]
+    best = max(scores) if higher_is_better else min(scores)
+    close = [r for r in rows if abs(r["Val_Metric"] - best) <= TOLERANCE + 1e-12]
+    sign = -1 if higher_is_better else 1
+    return min(close, key=lambda r: (simplicity(r), sign * r["Val_Metric"]))
+
+
+def run(quick: bool = False, n_samples: int | None = None, out_dir=None):
     """
     Run hyperparameter sweeps for Task A and Task B on a stratified subsample.
-    Mirrors svm_tuning.py structure.
+    Mirrors svm_tuning.py structure. n_samples overrides the subsample size
+    (16,000; 5,000 with quick), and out_dir, if given, receives every output
+    (JSON, tables and figures); both are for the test.
     """
     print(f"--- Running Decision Tree Hyperparameter Sweep (quick={quick}) ---")
     
-    # Setup output directories based on mode
-    results_dir = os.path.join("results", "quick" if quick else "")
-    figures_dir = os.path.join("report", "figures")
-    os.makedirs(results_dir, exist_ok=True)
-    os.makedirs(figures_dir, exist_ok=True)
+    # Output folders as in svm_tuning.py: the config JSONs go to results/
+    # (results/quick/ in quick mode), the sweep table to <results>/tree_experiment/,
+    # and the figures to report/figures/ in full mode only (quick mode keeps them
+    # next to the sweep table, so it never overwrites a report figure).
+    results_dir = os.path.join("results", "quick") if quick else "results"
+    table_dir = os.path.join(results_dir, "tree_experiment")
+    figures_dir = table_dir if quick else os.path.join("report", "figures")
+    if out_dir is not None:
+        results_dir = table_dir = figures_dir = str(out_dir)
+    for folder in (results_dir, table_dir, figures_dir):
+        os.makedirs(folder, exist_ok=True)
     
     # 1. Load data
     df = data_prep.clean(data_prep.load_raw(data_prep.DATA_PATH))
@@ -47,7 +168,8 @@ def run(quick: bool = False):
     y_val_log = np.log(y_val_price)
     
     # 3. Subsample training data (stratified by tier)
-    n_samples = 5000 if quick else 16000
+    if n_samples is None:
+        n_samples = 5000 if quick else 16000
     np.random.seed(data_prep.SEED)
     
     idx_0 = np.where(y_train_tier_full == 0)[0]
@@ -77,8 +199,6 @@ def run(quick: bool = False):
     
     # --- TASK B: Classification (Price Tier) ---
     print("\nStarting Task B (Classification) sweep...")
-    best_b_val = -1.0
-    best_b_config = None
     task_b_curves = {"gini": {"train": [], "val": []}, "entropy": {"train": [], "val": []}}
     depths = [2, 4, 6, 8, 10, 12]
     
@@ -99,16 +219,14 @@ def run(quick: bool = False):
             task_b_curves[crit]["val"].append(val_f1)
             
             results_table.append({
-                "Task": "B_Classification", "Criterion": crit, "Max_Depth": d, "Min_Samples_Leaf": 1,
-                "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
+                "Task": "B_Classification", "Step": "depth", "Criterion": crit, "Max_Depth": d,
+                "Min_Samples_Leaf": 1, "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
             })
-            
-            if best_b_config is None or val_f1 > best_b_val + 0.002:
-                best_b_val = val_f1
-                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
-            elif abs(val_f1 - best_b_val) <= 0.002 and d < best_b_config["max_depth"]:
-                best_b_val = val_f1
-                best_b_config = {"criterion": crit, "max_depth": d, "min_samples_leaf": 1}
+
+    depth_rows = [r for r in results_table if r["Task"] == "B_Classification"]
+    chosen = _select(depth_rows, higher_is_better=True, simplicity=lambda r: r["Max_Depth"])
+    best_b_config = {"criterion": chosen["Criterion"], "max_depth": chosen["Max_Depth"], "min_samples_leaf": 1}
+    leaf_rows = [chosen]
 
     print(f"Best Task B base config: {best_b_config}. Sweeping min_samples_leaf...")
     for msl in [5, 20, 50]:
@@ -124,22 +242,17 @@ def run(quick: bool = False):
         _, _, val_f1 = precision_recall_f1(y_val_tier, val_preds)
         
         results_table.append({
-            "Task": "B_Classification", "Criterion": best_b_config["criterion"], 
+            "Task": "B_Classification", "Step": "leaf", "Criterion": best_b_config["criterion"],
             "Max_Depth": best_b_config["max_depth"], "Min_Samples_Leaf": msl,
             "Train_Metric": tr_f1, "Val_Metric": val_f1, "Fit_Time_s": fit_time
         })
-        
-        if val_f1 > best_b_val + 0.002:
-            best_b_val = val_f1
-            best_b_config["min_samples_leaf"] = msl
-        elif abs(val_f1 - best_b_val) <= 0.002 and msl > best_b_config["min_samples_leaf"]:
-            best_b_val = val_f1
-            best_b_config["min_samples_leaf"] = msl
+        leaf_rows.append(results_table[-1])
+
+    chosen = _select(leaf_rows, higher_is_better=True, simplicity=lambda r: -r["Min_Samples_Leaf"])
+    best_b_config["min_samples_leaf"] = chosen["Min_Samples_Leaf"]
 
     # --- TASK A: Regression (Log Price) ---
     print("\nStarting Task A (Regression) sweep...")
-    best_a_val = float('inf')
-    best_a_config = None
     task_a_curves = {"train": [], "val": []}
     
     for d in depths:
@@ -158,16 +271,14 @@ def run(quick: bool = False):
         task_a_curves["val"].append(val_rmse)
         
         results_table.append({
-            "Task": "A_Regression", "Criterion": "mse", "Max_Depth": d, "Min_Samples_Leaf": 1,
-            "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
+            "Task": "A_Regression", "Step": "depth", "Criterion": "mse", "Max_Depth": d,
+            "Min_Samples_Leaf": 1, "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
         })
-        
-        if best_a_config is None or val_rmse < best_a_val - 0.002:
-            best_a_val = val_rmse
-            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
-        elif abs(val_rmse - best_a_val) <= 0.002 and d < best_a_config["max_depth"]:
-            best_a_val = val_rmse
-            best_a_config = {"max_depth": d, "min_samples_leaf": 1}
+
+    depth_rows = [r for r in results_table if r["Task"] == "A_Regression"]
+    chosen = _select(depth_rows, higher_is_better=False, simplicity=lambda r: r["Max_Depth"])
+    best_a_config = {"max_depth": chosen["Max_Depth"], "min_samples_leaf": 1}
+    leaf_rows = [chosen]
 
     print(f"Best Task A base config: {best_a_config}. Sweeping min_samples_leaf...")
     for msl in [5, 20, 50]:
@@ -183,25 +294,46 @@ def run(quick: bool = False):
         val_rmse = rmse(y_val_log, val_preds)
         
         results_table.append({
-            "Task": "A_Regression", "Criterion": "mse", 
+            "Task": "A_Regression", "Step": "leaf", "Criterion": "mse",
             "Max_Depth": best_a_config["max_depth"], "Min_Samples_Leaf": msl,
             "Train_Metric": tr_rmse, "Val_Metric": val_rmse, "Fit_Time_s": fit_time
         })
-        
-        if val_rmse < best_a_val - 0.002:
-            best_a_val = val_rmse
-            best_a_config["min_samples_leaf"] = msl
-        elif abs(val_rmse - best_a_val) <= 0.002 and msl > best_a_config["min_samples_leaf"]:
-            best_a_val = val_rmse
-            best_a_config["min_samples_leaf"] = msl
+        leaf_rows.append(results_table[-1])
+
+    chosen = _select(leaf_rows, higher_is_better=False, simplicity=lambda r: -r["Min_Samples_Leaf"])
+    best_a_config["min_samples_leaf"] = chosen["Min_Samples_Leaf"]
+
+    # --- LEARNING CURVE: the chosen configs on 1/8, 1/4, 1/2 and all of the
+    # subsample (2k, 4k, 8k, 16k rows in full mode). The subsample is in random
+    # order, so each prefix is a random subset; scored on validation only.
+    sizes = [len(X_train) // 8, len(X_train) // 4, len(X_train) // 2, len(X_train)]
+    curve_rows = []
+    for k in sizes:
+        tree = DecisionTree(task="regression", criterion="mse", max_depth=best_a_config["max_depth"],
+                            min_samples_split=10, min_samples_leaf=best_a_config["min_samples_leaf"])
+        tree.fit(X_train[:k], y_train_log[:k])
+        curve_rows.append({"Task": "A_Regression", "Train_Size": k,
+                           "Train_Metric": rmse(y_train_log[:k], tree.predict(X_train[:k])),
+                           "Val_Metric": rmse(y_val_log, tree.predict(X_val))})
+        tree = DecisionTree(task="classification", criterion=best_b_config["criterion"],
+                            max_depth=best_b_config["max_depth"], min_samples_split=10,
+                            min_samples_leaf=best_b_config["min_samples_leaf"])
+        tree.fit(X_train[:k], y_train_tier[:k])
+        curve_rows.append({"Task": "B_Classification", "Train_Size": k,
+                           "Train_Metric": precision_recall_f1(y_train_tier[:k], tree.predict(X_train[:k]))[2],
+                           "Val_Metric": precision_recall_f1(y_val_tier, tree.predict(X_val))[2]})
+    curve = pd.DataFrame(curve_rows)
+    curve.to_csv(os.path.join(table_dir, "tree_learning_curve.csv"), index=False)
 
     # --- OUTPUTS (JSON/CSV) ---
     print("\n--- Final Selected Configurations ---")
-    selection_rule = "Selection rule: best validation metric. If within 0.002, choose smaller max_depth, then larger min_samples_leaf."
+    selection_rule = (f"In each sweep step, the best validation score (Task A: RMSE of log price, lower is better; "
+                      f"Task B: F1, higher is better); among all configs within {TOLERANCE} of it, the smallest "
+                      "max_depth (depth step) or the largest min_samples_leaf (leaf step).")
     print(selection_rule)
     
     df_results = pd.DataFrame(results_table)
-    df_results.to_csv(os.path.join(results_dir, "tree_sweep_table.csv"), index=False)
+    df_results.to_csv(os.path.join(table_dir, "tree_sweep_table.csv"), index=False)
     
     final_config = {
         "config": {
@@ -228,31 +360,12 @@ def run(quick: bool = False):
         json.dump(selection_info, f, indent=4)
         
     # --- FIGURES (Part 3) ---
-    plt.rcParams.update({'font.size': 8})
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.5))
-    
-    ax1.plot(depths, task_a_curves["train"], label='Train RMSE', marker='o')
-    ax1.plot(depths, task_a_curves["val"], label='Val RMSE', marker='s')
-    ax1.set_xlabel("Max Depth")
-    ax1.set_ylabel("RMSE (Log Price)")
-    ax1.set_title("Task A: Depth Curve")
-    ax1.legend()
-    ax1.grid(True)
-    
-    ax2.plot(depths, task_b_curves["gini"]["train"], 'b--', label='Train F1 (Gini)', alpha=0.5)
-    ax2.plot(depths, task_b_curves["gini"]["val"], 'b-', label='Val F1 (Gini)', marker='s')
-    ax2.plot(depths, task_b_curves["entropy"]["train"], 'g--', label='Train F1 (Entropy)', alpha=0.5)
-    ax2.plot(depths, task_b_curves["entropy"]["val"], 'g-', label='Val F1 (Entropy)', marker='^')
-    ax2.set_xlabel("Max Depth")
-    ax2.set_ylabel("F1 Score")
-    ax2.set_title("Task B: Depth Curve")
-    ax2.legend()
-    ax2.grid(True)
-    
-    plt.tight_layout()
-    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.png"), dpi=300)
-    fig.savefig(os.path.join(figures_dir, "tree_depth_curves.pdf"))
-    plt.close()
+    plot_depth_curves(depths, task_a_curves, task_b_curves, figures_dir)
+    plot_slide_depth_curves(depths, task_b_curves, figures_dir)
+    configs = {"A": f"depth {best_a_config['max_depth']}, leaf {best_a_config['min_samples_leaf']}",
+               "B": f"{best_b_config['criterion']}, depth {best_b_config['max_depth']}, "
+                    f"leaf {best_b_config['min_samples_leaf']}"}
+    plot_learning_curve(curve, configs, figures_dir)
     print(f"Figures saved to {figures_dir}")
 
 if __name__ == "__main__":

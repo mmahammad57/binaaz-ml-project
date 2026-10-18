@@ -1,6 +1,6 @@
 model,A RMSE (log),A R2 (log),"A R2 (log), CV",A R2 (AZN),B F1,"B F1, CV",B ROC-AUC
-Tree (ours),0.241,0.853,0.831 ± 0.006,0.753,n/a,n/a,n/a
-Tree (sklearn),0.242,0.852,0.831 ± 0.005,0.739,n/a,n/a,n/a
+Tree (ours),0.227,0.870,0.838 ± 0.008,0.764,n/a,n/a,n/a
+Tree (sklearn),0.227,0.870,0.839 ± 0.008,0.753,n/a,n/a,n/a
 Tree gini (ours),n/a,n/a,n/a,n/a,0.926,0.907 ± 0.006,0.971
 Tree gini (sklearn),n/a,n/a,n/a,n/a,0.926,0.907 ± 0.006,0.971
 Tree entropy (ours),n/a,n/a,n/a,n/a,0.920,0.907 ± 0.004,0.975
